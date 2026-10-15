@@ -1,0 +1,10 @@
+{"seq": 1, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "run_started", "message": "开始 demo run：演示目标 FAKE0，采集 40 s（演示数据）"}
+{"seq": 2, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_started", "message": "precheck 开始"}
+{"seq": 3, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_finished", "message": "precheck 通过"}
+{"seq": 4, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_finished", "message": "build 通过"}
+{"seq": 5, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_finished", "message": "upload 通过"}
+{"seq": 6, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_started", "message": "observe 开始（40 s 窗口）"}
+{"seq": 7, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_finished", "message": "observe 完成：11 行"}
+{"seq": 8, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_finished", "message": "decode 完成"}
+{"seq": 9, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "step_finished", "message": "assert 完成：6/6 通过"}
+{"seq": 10, "ts": "2026-01-01T12:00:00.000Z", "session_id": "20260101-120500-live-fake", "kind": "run_finished", "message": "demo run 结论 pass"}

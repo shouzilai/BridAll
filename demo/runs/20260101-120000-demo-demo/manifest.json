@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "run": {
+    "run_id": "20260101-120000-demo-demo",
+    "suite": "demo",
+    "target": "demo",
+    "port": "FAKE0",
+    "started_utc": "2026-01-01T12:00:00.000Z",
+    "observe_seconds": 40.0,
+    "reset_pulse": false,
+    "expect_sensor": false
+  },
+  "host": {
+    "platform": "demo",
+    "python": "3.11"
+  },
+  "tools": {},
+  "repo": {},
+  "firmware": {},
+  "client": {
+    "id": "demo",
+    "label": "演示数据"
+  },
+  "device": {
+    "port": "FAKE0",
+    "target_id": "demo",
+    "firmware_id": "demo/default",
+    "device_key": "fake",
+    "scan_seq": null
+  },
+  "dictionary_used": {}
+}

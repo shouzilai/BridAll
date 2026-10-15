@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "tools": {
+    "iar_build": "<你的 IAR 安装目录>/common/bin/IarBuild.exe",
+    "cspybat": "<你的 IAR 安装目录>/common/bin/CSpyBat.exe",
+    "make": "<你的 make 可执行文件（在 PATH 里就不用写）>",
+    "pio": "<你的 PlatformIO Core（pio）可执行文件>",
+    "esptool": "<你的 esptool 可执行文件>"
+  },
+  "projects": {
+    "stm32f103-baremetal": "<你的 STM32 裸机工程根>",
+    "stm32f103-rtthread": "<你的 RT-Thread 工程根>",
+    "esp32-generic-fw": "<你的 PlatformIO 工程根>"
+  },
+  "devices": {
+    "stm32a": {"port": "<通信口，例：PORT-A>"},
+    "esp32a": {"port": "<通信口，例：PORT-B>"}
+  }
+}

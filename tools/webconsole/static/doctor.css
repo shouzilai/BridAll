@@ -1,0 +1,282 @@
+/* 平台体检页（ / D5）的样式 —— 与工作台同一套配色，但**互不影响**：
+   这个文件只被 /doctor 引用（工作台的 style.css 一行都不动）。 */
+:root {
+  color-scheme: dark;
+  --bg: #10141b;
+  --panel: #171d26;
+  --panel-2: #1d2530;
+  --line: #2a3442;
+  --text: #dde4ee;
+  --muted: #8d9aab;
+  --focus: #4c9ef8;
+  --accent: #4c9ef8;
+  --pass: #46c07a;
+  --fail: #f0605f;
+  --warn: #e2b341;
+  --skip: #7f8c9c;
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  --scrollbar-w: 6px;
+}
+
+:root[data-theme="warm"] {
+  color-scheme: light;
+  --bg: #fbf6ef;
+  --panel: #fffdf9;
+  --panel-2: #f5ecdf;
+  --line: #e8dccb;
+  --text: #4a3728;
+  --muted: #725b4b;
+  --focus: #a84e0b;
+  --accent: #a84e0b;
+  --pass: #237245;
+  --fail: #b13d32;
+  --warn: #885000;
+  --skip: #756052;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+code { font-family: var(--mono); }
+
+a { color: var(--accent); }
+
+::-webkit-scrollbar { width: var(--scrollbar-w); height: var(--scrollbar-w); }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ------------------------------------------------------------------ 页头 */
+.dh-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 14px 22px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.dh-head h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+
+.dh-tools { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+.dh-tools button,
+.dh-tools a {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 主题：两个图标按钮（月亮 = 深色调试、太阳 = 暖色工作台；用户口径 2026-10-12）。
+   两个按钮同宽同高（图标尺寸固定），换主题不挪旁边那两个按钮。 */
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+}
+.theme-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.theme-ico { width: 15px; height: 15px; }
+
+.dh-tools button:hover,
+.dh-tools a:hover { border-color: var(--accent); }
+.dh-tools button:disabled { opacity: .55; cursor: progress; }
+
+/* ------------------------------------------------------------------ 汇总 */
+#doctorMain { padding: 16px 22px 40px; max-width: 1180px; }
+
+.dh-summary { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+
+.dh-badge {
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+.dh-badge[data-result="PASS"] { color: var(--pass); border-color: var(--pass); }
+.dh-badge[data-result="WARN"] { color: var(--warn); border-color: var(--warn); }
+.dh-badge[data-result="FAIL"] { color: var(--fail); border-color: var(--fail); }
+
+.dh-counts { color: var(--text); }
+.dh-when { color: var(--muted); font-size: 12.5px; }
+.dh-error { margin: 12px 0 0; color: var(--fail); }
+
+/* ------------------------------------------------------------------ 分组 */
+.dh-group { margin-top: 22px; }
+
+.dh-group h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+.dh-group-count { color: var(--muted); font-weight: 400; }
+
+/* ------------------------------------------------------------- 状态筛选 */
+.dh-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 0;
+}
+.dh-filters-label { color: var(--muted); font-size: 12.5px; }
+.dh-show-all { font-size: 12px; padding: 3px 9px; }
+.dh-filter-buttons { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+
+.dh-filter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dh-filter:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.dh-filter:disabled { opacity: .45; cursor: default; }
+.dh-filter-count { font-family: var(--mono); }
+.dh-filter[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.dh-filter[aria-pressed="true"][data-status="pass"] { border-color: var(--pass); }
+.dh-filter[aria-pressed="true"][data-status="warn"] { border-color: var(--warn); }
+.dh-filter[aria-pressed="true"][data-status="fail"] { border-color: var(--fail); }
+.dh-filter[aria-pressed="true"][data-status="skip"] { border-color: var(--skip); }
+
+.dh-check[hidden], .dh-subgroup[hidden], .dh-group[hidden] { display: none; }
+
+/* ----------------------------------------------------------- 动作反馈条 */
+.dh-flash {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.dh-flash[hidden] { display: none; }
+.dh-flash[data-kind="ok"] { border-left-color: var(--pass); }
+.dh-flash[data-kind="info"] { border-left-color: var(--accent); }
+.dh-flash[data-kind="err"] { border-left-color: var(--fail); color: var(--fail); }
+
+/* --------------------------------------------------------- 二级分类标题 */
+.dh-subgroup { margin: 12px 0 0; }
+.dh-subgroup:first-of-type { margin-top: 4px; }
+.dh-subgroup-head {
+  margin: 0 0 6px;
+  padding: 0 0 0 8px;
+  border-left: 2px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.dh-subgroup-count { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+
+.dh-check {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+}
+.dh-check[data-status="pass"] { border-left-color: var(--pass); }
+.dh-check[data-status="warn"] { border-left-color: var(--warn); }
+.dh-check[data-status="fail"] { border-left-color: var(--fail); }
+.dh-check[data-status="skip"] { border-left-color: var(--skip); }
+
+.dh-check-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+
+.dh-status {
+  min-width: 44px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+.dh-check[data-status="pass"] .dh-status { color: var(--pass); }
+.dh-check[data-status="warn"] .dh-status { color: var(--warn); }
+.dh-check[data-status="fail"] .dh-status { color: var(--fail); }
+.dh-check[data-status="skip"] .dh-status { color: var(--skip); }
+
+.dh-check-title { font-weight: 600; }
+
+/* 「详情」：实测 / 期望 / 检查项编号这类技术细节默认收起，不占主界面。 */
+.dh-detail-btn {
+  margin-top: 6px;
+  padding: 2px 9px;
+  font-size: 12px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dh-detail-btn:hover { border-color: var(--accent); color: var(--accent); }
+.dh-check-detail { margin-top: 6px; }
+.dh-check-detail[hidden] { display: none; }
+
+.dh-facts {
+  display: grid;
+  grid-template-columns: 3.2em 1fr;
+  gap: 2px 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 13px;
+}
+.dh-facts dt { color: var(--muted); }
+.dh-facts dd { margin: 0; overflow-wrap: anywhere; }
+
+/* --------------------------------------------------------------- 下一步 */
+.dh-actions { margin-top: 24px; }
+.dh-actions h2 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+.dh-actions ul { margin: 0; padding-left: 20px; }
+.dh-actions li { margin-bottom: 4px; }
+.dh-actions li[data-status="FAIL"] { color: var(--fail); }
+.dh-actions li[data-status="WARN"] { color: var(--warn); }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .dh-facts { grid-template-columns: 1fr; }
+  .dh-facts dt { margin-top: 4px; }
+}

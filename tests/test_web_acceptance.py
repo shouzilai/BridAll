@@ -1,0 +1,662 @@
+#!/usr/bin/env python3
+"""Web 验收（无硬件、无 pyserial）：首页 / 静态资源 / 三模式 / 历史回放 / 嗅探 / 连接生命周期。
+
+需求 §6.8 / §6.9 / §6.10 / §6.11 的**自动化**那一半：
+
+| 这一条测试盖住 | 怎么盖的 |
+| --- | --- |
+| 按公开 README 启动后页面能开 | 真起 `ConsoleServer`（随机端口），GET `/`、`/doctor`、`/static/*` |
+| 三种模式都在 | 首页 HTML 里三个入口 + 三个工作区都在 |
+| 无硬件演示不读仓库外文档 | 演示装配跑的是仓库自带的 `demo/` 合成证据（历史回放那两条） |
+| `POST /api/sniff` 有结论 | 候选口为空 ⇒ 202 + 空卡片 + **可操作的说明**（不是 503） |
+| 选择 → 连接 → 断开 → 重连 | 卡片引用路径全走一遍（与页面同一条路） |
+| 身份未知设备也能先连接 | 静默设备：连上后 `transparent`，理由说得出 |
+| 已连接的口不被嗅探抢占 | 连接状态下再嗅探：那个口**没有重开、没有写字节** |
+| 只读目标不许跑自动验证 | `/api/run` 被拒，理由点名“策略不允许” |
+
+⚠️ 传输是**注入的假串口**（`FakePort` 系）：这台机器上没有硬件、也没有 pyserial，
+所以"能连上"这件事必须靠一个可控的内存串口来证明 —— 而**页面与 API 那条路一个字没改**。
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import socket
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+CONSOLE_DIR = ROOT / "tools" / "webconsole"
+TARGETS_DIR = ROOT / "targets"
+for _directory in (str(CONSOLE_DIR), str(ROOT / "tools"), str(TARGETS_DIR)):
+    if _directory not in sys.path:
+        sys.path.insert(0, _directory)
+
+import bench_config  # noqa: E402
+import bench_setup  # noqa: E402
+import bench_target  # noqa: E402
+import device_registry  # noqa: E402
+import fake_target  # noqa: E402
+import server as console_server  # noqa: E402
+import sniff_service  # noqa: E402
+import stm32_target  # noqa: E402
+
+FAILURES: list[str] = []
+
+
+def check(name: str, condition: bool, detail: str = "") -> bool:
+    mark = "PASS" if condition else "FAIL"
+    print(f"{mark} {name}" + (f"：{detail}" if detail and not condition else ""))
+    if not condition:
+        FAILURES.append(name)
+    return bool(condition)
+
+
+# --------------------------------------------------------------------- 假传输
+IDENTITY_LINE = b"@PWINFO project=stm32f103-demo build_id=0x1234abcd\r\n"
+PORT_ANSWERS = "socket://127.0.0.1:8775"
+PORT_SILENT = "socket://127.0.0.1:8776"
+#: **系统枚举到、台架里没点名**的口 —— 走“通用串口”那条路（需求 §6.11/§6.12）。
+PORT_GENERIC = "socket://127.0.0.1:8799"
+
+
+class RespondingPort(fake_target.FakePort):
+    """会（或不会）答身份的内存串口：`write` 出去的查询拿回一行 `@PWINFO`。"""
+
+    def __init__(self, name: str, baud: int, reply: bytes = b"") -> None:
+        super().__init__(name, baud)
+        self._reply = bytes(reply)
+        self.writes: list[bytes] = []
+
+    def write(self, data) -> int:
+        payload = bytes(data)
+        self.writes.append(payload)
+        count = super().write(payload)
+        if self._reply and b"@PWINFO" in payload:
+            self.feed(self._reply)
+        return count
+
+
+class FakeTransport:
+    """四件传输实现（打开 / 占用探测 / 受控一问一答 / **系统串口枚举**），全部在内存里。"""
+
+    def __init__(self, answers: dict[str, bytes], *, enumerated: tuple[str, ...] = ()) -> None:
+        self.answers = dict(answers)
+        self.enumerated = tuple(enumerated)
+        self.opened: list[str] = []
+        self.handles: dict[str, RespondingPort] = {}
+        self.probes: list[str] = []
+        self.exchanges: list[str] = []
+
+    def port_factory(self, name: str, baud: int):
+        self.opened.append(str(name))
+        handle = RespondingPort(str(name), int(baud), self.answers.get(str(name), b""))
+        self.handles[str(name)] = handle
+        return handle
+
+    def port_probe(self, name: str) -> str:
+        self.probes.append(str(name))
+        # 枚举得到的口都当“空闲”：这是替身的声明，不是对真机的断言。
+        if str(name) in self.answers or str(name) in self.enumerated:
+            return device_registry.ACCESS_FREE
+        return device_registry.ACCESS_UNKNOWN
+
+    def exchange(self, name, baud, payload, max_bytes, wait_s) -> bytes:
+        del baud, payload, max_bytes, wait_s
+        self.exchanges.append(str(name))
+        return self.answers.get(str(name), b"")
+
+    def list_ports(self) -> tuple[tuple[str, str], ...]:
+        return tuple((port, f"假串口 {index}") for index, port in enumerate(self.enumerated))
+
+    def as_transport(self) -> bench_target.Transport:
+        return bench_target.Transport(
+            port_factory=self.port_factory,
+            port_probe=self.port_probe,
+            exchange=self.exchange,
+            list_ports=self.list_ports,
+            note="注入的假串口（无硬件验收）",
+            label="测试假串口",
+        )
+
+
+# --------------------------------------------------------------------- 服务
+class Running:
+    """把服务跑在随机端口上，并给一个**绕开本机代理**的 HTTP 客户端。"""
+
+    def __init__(self, assembled) -> None:
+        self.server = console_server.ConsoleServer(
+            ("127.0.0.1", 0),
+            console_server.ConsoleHandler,
+            assembled.runners,
+            assembled.observe,
+            platform=assembled.platform_facts,
+            catalog=assembled.catalog,
+            sniff=assembled.sniff,
+            assembly=assembled,
+        )
+        self.port = int(self.server.server_address[1])
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def close(self) -> None:
+        try:
+            self.server.shutdown()
+        except Exception:  # noqa: BLE001 - 关不掉不影响结论（进程会结束）
+            pass
+        try:
+            self.server.server_close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=None if body is None else json.dumps(body).encode("utf-8"),
+            method=method,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with self.opener.open(request, timeout=30) as response:
+                raw = response.read().decode("utf-8", "replace")
+                return response.status, (json.loads(raw) if raw.strip().startswith(("{", "[")) else {"text": raw})
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode("utf-8", "replace")
+            try:
+                return error.code, json.loads(raw or "{}")
+            except json.JSONDecodeError:
+                return error.code, {"error": raw[:200]}
+
+    def text(self, path: str) -> tuple[int, str]:
+        status, payload = self.call("GET", path)
+        return status, str(payload.get("text") or "")
+
+
+def wait_for(predicate, *, seconds: float = 8.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+# --------------------------------------------------------------------- 用例
+def check_demo_pages() -> None:
+    """演示装配：页面 / 静态资源 / 三模式 / 历史回放（需求 §6.8、§6.9）。"""
+    print("\n[1] 演示装配：页面、静态资源、三种模式、历史回放")
+    console_server.use_demo_data(True)
+    assembled = console_server.build_demo_assembly()
+    running = Running(assembled)
+    try:
+        check("装配自检为空", not assembled.problems(), str(assembled.problems()))
+        status, payload = running.call("GET", "/api/state")
+        check("GET /api/state = 200", status == 200, str(status))
+        check("状态里有装配", bool(payload.get("assemblies")), json.dumps(payload.get("assemblies"), ensure_ascii=False)[:120])
+
+        status, html = running.text("/")
+        check("GET / = 200", status == 200, str(status))
+        for name in ("自动验证", "实时观察", "离线诊断"):
+            check(f"首页有「{name}」入口", name in html)
+        for pane in ("logWorkspace", "autoPanel", "offlinePanel"):
+            check(f"首页有 {pane} 工作区", pane in html)
+
+        for asset in ("/static/app.js", "/static/style.css", "/static/index.html"):
+            status, text = running.text(asset)
+            check(f"GET {asset} = 200 且有内容", status == 200 and len(text) > 100, f"{status}/{len(text)}")
+
+        status, doctor = running.text("/doctor")
+        check("GET /doctor = 200", status == 200 and "体检" in doctor, str(status))
+
+        status, payload = running.call("GET", "/api/runs")
+        runs = payload.get("runs") or payload.get("items") or []
+        ids = [str(row.get("run_id") or row.get("id") or "") for row in runs] if isinstance(runs, list) else []
+        check("历史 run 列表里有演示 run", any("20260101-120000-demo-demo" in rid for rid in ids), str(ids)[:200])
+        demo_id = next((rid for rid in ids if "20260101-120000-demo-demo" in rid), "")
+        if demo_id:
+            status, detail = running.call("GET", f"/api/runs/{demo_id}")
+            check("演示 run 详情可读", status == 200, str(status))
+        status, sessions = running.call("GET", "/api/observe/sessions")
+        rows = sessions.get("sessions") or []
+        check(
+            "会话列表里有演示会话",
+            any("20260101-120500-live-fake" in str(row.get("session_id") or "") for row in rows),
+            str(rows)[:200],
+        )
+    finally:
+        running.close()
+    console_server.use_demo_data(False)
+
+
+def check_live_without_bench() -> None:
+    """**零配置路径**（没有 `bench.local.json`、没有任何 Adapter）：系统枚举到的口就能用（需求 §6.10/§6.11）。"""
+    print("\n[2] 零配置：只靠系统串口枚举也能选、连、收发")
+    bench_setup.install_from(root=Path(tempfile.mkdtemp()))  # 有台架文件，但一格都不填
+    work = Path(tempfile.mkdtemp())
+    fake = FakeTransport({}, enumerated=(PORT_GENERIC,))
+    assembled = console_server.build_live_assembly(
+        work / "runs",
+        sessions_dir=work / "ses",
+        imports_dir=work / "imp",
+        transport=fake.as_transport(),
+        sniff_dir=work / "sniff",
+    )
+    running = Running(assembled)
+    try:
+        check("装配自检为空", not assembled.problems(), str(assembled.problems()))
+        status, payload = running.call("GET", "/api/state")
+        check("GET /api/state = 200", status == 200, str(status))
+        ports = [str(spec.port) for row in assembled.assemblies for spec in row.pipeline.devices.specs()]
+        check("台架一格都没填", ports == ["", ""], str(ports))
+
+        status, payload = running.call("POST", "/api/sniff", {})
+        check("POST /api/sniff = 202（不是 503）", status == 202, str(status))
+        sniff = payload.get("sniff") or {}
+        cards = list(sniff.get("cards") or [])
+        check("系统枚举到的口出现在卡片里", [str(card.get("port")) for card in cards] == [PORT_GENERIC],
+              json.dumps([card.get("port") for card in cards], ensure_ascii=False))
+        notes = " ".join(str(item) for item in (sniff.get("notes") or ()))
+        check("说明里讲了候选口来自哪儿（系统枚举 + 台架）",
+              "系统串口枚举" in notes and "台架" in notes, notes[:200])
+
+        # 未适配、身份未知的串口 ⇒ 通用设备：能连、能发、能收（需求 §6.12）。
+        card = cards[0] if cards else {}
+        reference = {"scan_seq": card.get("scan_seq"), "port": card.get("port")}
+        status, payload = running.call("POST", "/api/observe/connect", {"device": reference})
+        check("通用串口能连上（无需 Adapter）", status == 202, f"{status} {payload}")
+        observe = payload.get("observe") or {}
+        check("连上且保持通用串口模式",
+              str(observe.get("state")) == "connected" and bool(observe.get("transparent")),
+              json.dumps({k: observe.get(k) for k in ("state", "transparent")}, ensure_ascii=False))
+        check("身份查询失败不阻止连接", bool(str(observe.get("transparent_reason") or "")),
+              str(observe.get("transparent_reason")))
+
+        status, payload = running.call("POST", "/api/observe/send",
+                                       {"mode": "text", "text": "hello", "line_ending": "crlf"})
+        check("能往通用串口发（202/200）", status in (200, 202), f"{status} {payload}")
+        handle = fake.handles.get(PORT_GENERIC)
+        check("发出去的字节真的到了那个口",
+              bool(handle) and any(b"hello" in chunk for chunk in handle.writes),
+              str(getattr(handle, "writes", None)))
+
+        status, payload = running.call("POST", "/api/observe/disconnect", {})
+        check("通用串口能断开", status == 200, str(status))
+        status, payload = running.call("POST", "/api/observe/reconnect", {})
+        check("通用串口能重连",
+              status == 202 and str((payload.get("observe") or {}).get("state")) == "connected",
+              str((payload.get("observe") or {}).get("state")))
+    finally:
+        running.close()
+
+
+def check_live_lifecycle() -> None:
+    """普通模式（配了候选口）：嗅探 → 连接 → 身份 → 断开 → 重连 + 不抢占。"""
+    print("\n[3] 普通模式（有候选口）：嗅探 / 连接 / 身份 / 断开 / 重连 / 不抢占")
+    work = Path(tempfile.mkdtemp())
+    bench_file = work / "bench.local.json"
+    bench_file.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "tools": {},
+                "projects": {},
+                "devices": {
+                    "stm32a": {"port": PORT_ANSWERS},
+                    "esp32a": {"port": PORT_SILENT},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    bench_setup.install_from(cli_path=str(bench_file))
+    fake = FakeTransport(
+        {PORT_ANSWERS: IDENTITY_LINE, PORT_SILENT: b""},
+        # 第三个口**台架没点名**、只在系统枚举里 —— 走“通用串口”那条路（需求 §6.11）。
+        enumerated=(PORT_GENERIC,),
+    )
+    assembled = console_server.build_live_assembly(
+        work / "runs",
+        sessions_dir=work / "ses",
+        imports_dir=work / "imp",
+        transport=fake.as_transport(),
+        sniff_dir=work / "sniff",
+    )
+    running = Running(assembled)
+    try:
+        check("装配自检为空", not assembled.problems(), str(assembled.problems()))
+
+        # ---- 嗅探：台架两个口 + 系统枚举到的第三个口
+        status, payload = running.call("POST", "/api/sniff", {})
+        check("POST /api/sniff = 202", status == 202, str(status))
+        cards = (payload.get("sniff") or {}).get("cards") or []
+        found = [str(card.get("port")) for card in cards]
+        check("候选口 = 台架两个 + 系统枚举一个（合并去重）",
+              sorted(found) == sorted([PORT_ANSWERS, PORT_SILENT, PORT_GENERIC]), json.dumps(found, ensure_ascii=False))
+        by_port = {str(card.get("port")): card for card in cards}
+        answered = by_port.get(PORT_ANSWERS) or {}
+        silent = by_port.get(PORT_SILENT) or {}
+        check("会答身份的那张卡：身份已确认", str(answered.get("identity_state")) == "confirmed",
+              str(answered.get("identity_state")))
+        fields = ((answered.get("observation") or {}).get("identity_fields")) or {}
+        check("卡片上写出了设备自报的身份",
+              fields.get("project") == "stm32f103-demo" and fields.get("build_id") == "0x1234abcd",
+              json.dumps(fields, ensure_ascii=False))
+        check("只读嗅探只发了一条查询",
+              str((answered.get("observation") or {}).get("tx_hex") or "").startswith("40 50 57 49 4E 46 4F"),
+              str((answered.get("observation") or {}).get("tx_hex")))
+        check("静默那张卡：没问到身份但仍在册", str(silent.get("identity_state")) == "unknown",
+              str(silent.get("identity_state")))
+        check("嗅探只碰候选口", sorted(set(fake.exchanges)) == sorted([PORT_ANSWERS, PORT_SILENT, PORT_GENERIC]),
+              str(fake.exchanges))
+
+        ref_answered = {"scan_seq": answered.get("scan_seq"), "port": PORT_ANSWERS}
+        ref_silent = {"scan_seq": silent.get("scan_seq"), "port": PORT_SILENT}
+
+        # ---- 身份未知的设备：**先连接**（不被拒）
+        status, payload = running.call("POST", "/api/observe/connect", {"device": ref_silent})
+        check("连接静默设备 = 202（身份未知也放行）", status == 202, str(status))
+        observe = payload.get("observe") or {}
+        check("静默设备连上了", str(observe.get("state")) == "connected", str(observe.get("state")))
+        check("静默设备走原始串口模式并说得出理由",
+              bool(observe.get("transparent")) and bool(observe.get("transparent_reason")),
+              json.dumps({k: observe.get(k) for k in ("transparent", "transparent_reason")}, ensure_ascii=False))
+        status, payload = running.call("POST", "/api/observe/disconnect", {"reason": "测试：换设备"})
+        check("断开 = 200", status == 200, str(status))
+
+        # ---- 已连接的口：嗅探**不抢占**
+        status, payload = running.call("POST", "/api/observe/connect", {"device": ref_answered})
+        check("连接会答身份的卡片 = 202", status == 202, str(status))
+        answered_status = payload.get("observe") or {}
+        check("连上了", str(answered_status.get("state")) == "connected", str(answered_status.get("state")))
+
+        fake.exchanges.clear()
+        status, payload = running.call("POST", "/api/sniff", {})
+        held = next(
+            (card for card in ((payload.get("sniff") or {}).get("cards") or [])
+             if str(card.get("port")) == PORT_ANSWERS),
+            None,
+        )
+        reason = str(((held or {}).get("observation") or {}).get("reason") or "")
+        tx = str(((held or {}).get("observation") or {}).get("tx_hex") or "")
+        check("嗅探没有重开已连接的口", held is not None and "未重复打开" in reason, reason)
+        check("嗅探没有向已连接的口写字节", tx == "", tx)
+        # ⚠️ 只要求**被占着的那个口**没被重新问过：另一个口（没被占）本来就该照常嗅。
+        check("嗅探没有重新打开被占着的口", PORT_ANSWERS not in fake.exchanges, str(fake.exchanges))
+
+        # ---- 身份：**连上之后**会话自己去问
+        got_identity = wait_for(
+            lambda: str(
+                ((running.call("GET", "/api/state")[1].get("observe") or {}).get("identity") or {}).get("state")
+            ) == "ok"
+        )
+        state = running.call("GET", "/api/state")[1].get("observe") or {}
+        check("连上后身份查询拿到结果", got_identity, str((state.get("identity") or {}).get("state")))
+        check("身份字段解析正确",
+              ((state.get("identity") or {}).get("fields") or {}).get("project") == "stm32f103-demo",
+              json.dumps((state.get("identity") or {}).get("fields"), ensure_ascii=False))
+
+        # ---- 断开 / 重连
+        status, payload = running.call("POST", "/api/observe/disconnect", {})
+        check("断开 = 200 且回到未连接", status == 200 and str((payload.get("observe") or {}).get("state")) != "connected",
+              str((payload.get("observe") or {}).get("state")))
+        status, payload = running.call("POST", "/api/observe/reconnect", {})
+        check("重连 = 202 且又连上了",
+              status == 202 and str((payload.get("observe") or {}).get("state")) == "connected",
+              str((payload.get("observe") or {}).get("state")))
+
+        # ---- 只读目标不许跑自动验证
+        status, payload = running.call(
+            "POST", "/api/run", {"target": "stm32f103", "firmware": "stm32f103/default", "suite": ""}
+        )
+        check("只读目标上 /api/run 被拒", status >= 400, f"{status} {payload}")
+        check("拒绝理由说得清", "策略" in json.dumps(payload, ensure_ascii=False)
+              or "未登记" in json.dumps(payload, ensure_ascii=False)
+              or "套件" in json.dumps(payload, ensure_ascii=False),
+              json.dumps(payload, ensure_ascii=False)[:200])
+    finally:
+        running.close()
+
+
+def check_serial_settings() -> None:
+    """需求 §6.10：基础串口参数（波特率 / 数据位 / 校验位 / 停止位）能设、能生效、非法值当场拒。"""
+    print("\n[4] 基础串口参数（设置 → 打开前应用 → 非法值拒绝）")
+    work = Path(tempfile.mkdtemp())
+    bench_setup.install_from(root=work)
+    fake = FakeTransport({PORT_GENERIC: b""}, enumerated=(PORT_GENERIC,))
+    assembled = console_server.build_live_assembly(
+        work / "runs", sessions_dir=work / "ses", imports_dir=work / "imp",
+        transport=fake.as_transport(), sniff_dir=work / "sniff",
+    )
+    running = Running(assembled)
+    try:
+        running.call("POST", "/api/sniff", {})
+        cards = (running.call("GET", "/api/state")[1].get("sniff") or {}).get("last") or {}
+        reference = {
+            "scan_seq": (cards.get("cards") or [{}])[0].get("scan_seq"),
+            "port": PORT_GENERIC,
+        }
+        status, payload = running.call(
+            "POST", "/api/observe/connect",
+            {"device": reference,
+             "serial": {"baud": 9600, "bytesize": 7, "parity": "E", "stopbits": 2}},
+        )
+        check("带串口参数连接 = 202", status == 202, f"{status} {payload}")
+        serial = (payload.get("observe") or {}).get("serial") or {}
+        check("服务端把这一套参数当成生效值",
+              str((serial.get("effective") or {}).get("baud")) == "9600",
+              json.dumps(serial.get("effective"), ensure_ascii=False))
+        check("四个参数都有下落（设上的或如实拒绍的）",
+              {"baud", "bytesize", "parity", "stopbits"}
+              <= set(serial.get("applied") or {}) | set(serial.get("refused") or {}),
+              json.dumps({"applied": serial.get("applied"), "refused": serial.get("refused")}, ensure_ascii=False))
+        check("可选值由服务端给（页面不自己编）",
+              sorted((serial.get("choices") or {}).keys()) == ["baud", "bytesize", "parity", "stopbits"],
+              json.dumps(serial.get("choices"), ensure_ascii=False)[:160])
+        status, payload = running.call("POST", "/api/observe/disconnect", {})
+        if status == 200:
+            pass
+        status, payload = running.call(
+            "POST", "/api/observe/connect", {"device": reference, "serial": {"baud": 123}}
+        )
+        check("非法波特率当场 400（不静默用默认值）", status == 400, f"{status} {payload}")
+        status, payload = running.call(
+            "POST", "/api/observe/connect", {"device": reference, "serial": {"nonsense": 1}}
+        )
+        check("不认识的参数名当场 400", status == 400, f"{status} {payload}")
+    finally:
+        running.close()
+
+
+def check_sniff_transport_and_failure_modes() -> None:
+    """嗅探的**传输来源**与**失败面**。
+
+    这一路的处理原则是：通用口（系统枚举到、台架没点名）**不属于 STM32/ESP32 任一装配**，
+    所以“拿什么去问这个口”必须来自**平台级传输实现**，不能靠“在装配清单里找到这个口”。
+    这一节把那条断言钉住，并证明四种“实现坏了”的情形**都不会**变成 HTTP 500：
+
+    | 坏在哪儿 | 期望 |
+    | --- | --- |
+    | 占用探测抛异常 | 202；卡片在；理由点名那句异常 |
+    | 一问一答抛非约定异常 | 202；卡片在；`open_failed` + 异常类型 |
+    | 资源闸门抛异常 | 202；卡片在；**没有打开那个口**（保守） |
+    | 证据写不进去 | 202；卡片在；notes 里说“没能落盘” |
+    """
+    print("\n[5] 嗅探的传输来源与失败面（公共 Transport / 不许 500）")
+    work = Path(tempfile.mkdtemp())
+    bench_setup.install_from(root=work)
+
+    # ---- 真实系统枚举的**形状**（不注入、不打开任何口）：零配置路径的基础候选源
+    real = bench_target.system_ports()
+    check("system_ports() 给的是 (口名, 描述) 的序列",
+          isinstance(real, tuple)
+          and all(isinstance(row, tuple) and len(row) == 2 and isinstance(row[0], str)
+                  for row in real),
+          str(real)[:160])
+    # ⚠️ 合并用例用**中性名字**（不写 COM<n> 这类字面串口名）：这个函数只是字符串
+    #    去重与保序，而写死的口名会被“本机事实”扫描当成“本机结构泄露”。
+    merged, note = bench_target.merge_candidates(["serial-A"], ["serial-a", "serial-B", ""])
+    check("合并：去空、忽略大小写去重、台架点名的在前",
+          merged == ("serial-A", "serial-B") and "台架" in note, f"{merged} / {note}")
+
+    # ---- 接线本身：装配清单为空（通用口不属于任一装配）也要拿得到公共传输实现
+    fake = FakeTransport({PORT_GENERIC: IDENTITY_LINE}, enumerated=(PORT_GENERIC,))
+    transport = fake.as_transport()
+    check("占用探测来自公共传输实现（装配清单为空也算）",
+          console_server._sniff_access((), transport) == fake.port_probe, "")
+    check("一问一答来自公共传输实现（装配清单为空也算）",
+          console_server._sniff_exchange((), transport) == fake.exchange, "")
+    check("完全没有传输实现时，占用探测如实回 unknown",
+          console_server._sniff_access((), None)(PORT_GENERIC)
+          == device_registry.ACCESS_UNKNOWN, "")
+    refusal = ""
+    try:
+        console_server._sniff_exchange((), None)(PORT_GENERIC, 115200, b"", 8, 0.1)
+    except sniff_service.ExchangeError as error:
+        refusal = str(error)
+    check("完全没有传输实现时，一问一答如实抛 ExchangeError", bool(refusal), refusal)
+
+    def assemble(with_transport):
+        assembled = console_server.build_live_assembly(
+            work / "runs", sessions_dir=work / "ses", imports_dir=work / "imp",
+            transport=with_transport, sniff_dir=work / "sniff",
+        )
+        return assembled
+
+    assembled = assemble(transport)
+    check("执行器用的是公共传输实现那一份",
+          assembled.sniff._exchange == transport.exchange, "")
+    running = Running(assembled)
+    try:
+        status, payload = running.call("POST", "/api/sniff", {})
+        check("通用口的嗅探 = 202", status == 202, str(status))
+        cards = (payload.get("sniff") or {}).get("cards") or []
+        check("通用口出了一张卡片",
+              [str(card.get("port")) for card in cards] == [PORT_GENERIC],
+              json.dumps([card.get("port") for card in cards], ensure_ascii=False))
+        check("问这个口走的就是公共传输实现", fake.exchanges == [PORT_GENERIC], str(fake.exchanges))
+        check("证据落在指定的临时目录里（不往随发布的树里写）",
+              any((work / "sniff").glob("*-sniff/result.json")), str(work / "sniff"))
+
+        # ---- 身份匹配到适配链、而口是**系统枚举到的通用口**：必须也能连
+        #      浏览器 E2E 抓到过：这条路上从前直接 409（“这个口不在这一路的设备登记里”），
+        #      于是“身份问到了反而连不上、问不到反而连得上”。
+        reference = {
+            "scan_seq": (cards[0] if cards else {}).get("scan_seq"),
+            "port": PORT_GENERIC,
+        }
+        status, payload = running.call("POST", "/api/observe/connect", {"device": reference})
+        observe = payload.get("observe") or {}
+        check("身份匹配到适配链的通用口也能连（不再 409）", status == 202,
+              f"{status} {json.dumps(payload, ensure_ascii=False)[:200]}")
+        check("连上之后走适配链（不是原始串口模式）",
+              str(observe.get("state")) == "connected" and not observe.get("transparent"),
+              json.dumps({k: observe.get(k) for k in ("state", "transparent")}, ensure_ascii=False))
+        status, payload = running.call("POST", "/api/observe/disconnect", {})
+        check("通用口（身份已确认）能断开", status == 200, str(status))
+    finally:
+        running.close()
+
+    # ---- 坏实现之一：占用探测抛异常
+    class ProbeBoom(FakeTransport):
+        def port_probe(self, name: str) -> str:
+            raise RuntimeError("占用探测自己坏了")
+
+    probe_boom = ProbeBoom({PORT_GENERIC: IDENTITY_LINE}, enumerated=(PORT_GENERIC,))
+    running = Running(assemble(probe_boom.as_transport()))
+    try:
+        status, payload = running.call("POST", "/api/sniff", {})
+        cards = (payload.get("sniff") or {}).get("cards") or []
+        reason = str(((cards[0] if cards else {}).get("observation") or {}).get("reason") or "")
+        check("占用探测抛异常：仍然 202（不是 500）", status == 202, str(status))
+        check("占用探测抛异常：卡片还在，理由点名那句异常",
+              bool(cards) and "RuntimeError" in reason, reason[:200])
+    finally:
+        running.close()
+
+    # ---- 坏实现之二：一问一答抛**非约定**异常（ValueError 不是 ExchangeError/OSError）
+    class ExchangeBoom(FakeTransport):
+        def exchange(self, name, baud, payload, max_bytes, wait_s) -> bytes:
+            raise ValueError("传输实现自己坏了")
+
+    exchange_boom = ExchangeBoom({}, enumerated=(PORT_GENERIC,))
+    running = Running(assemble(exchange_boom.as_transport()))
+    try:
+        status, payload = running.call("POST", "/api/sniff", {})
+        cards = (payload.get("sniff") or {}).get("cards") or []
+        observation = (cards[0] if cards else {}).get("observation") or {}
+        reason = str(observation.get("reason") or "")
+        check("一问一答抛非约定异常：仍然 202（不是 500）", status == 202, str(status))
+        check("一问一答抛非约定异常：结论是 open_failed",
+              str(observation.get("outcome")) == "open_failed", str(observation.get("outcome")))
+        check("一问一答抛非约定异常：理由里有异常类型", "ValueError" in reason, reason[:200])
+    finally:
+        running.close()
+
+    # ---- 坏实现之三：资源闸门抛异常（保守：宁可少问一个口，也不撞上正在跑的会话）
+    gate = FakeTransport({PORT_GENERIC: IDENTITY_LINE}, enumerated=(PORT_GENERIC,))
+    broken = assemble(gate.as_transport())
+
+    def gate_boom(port: str) -> str:
+        raise RuntimeError("闸门坏了")
+
+    broken.sniff._conflict = gate_boom
+    running = Running(broken)
+    try:
+        status, payload = running.call("POST", "/api/sniff", {})
+        cards = (payload.get("sniff") or {}).get("cards") or []
+        observation = (cards[0] if cards else {}).get("observation") or {}
+        check("资源闸门抛异常：仍然 202（不是 500）", status == 202, str(status))
+        check("资源闸门抛异常：如实回“没有打开”", "资源闸门出错" in str(observation.get("reason") or ""),
+              str(observation.get("reason"))[:200])
+        check("资源闸门抛异常：真的一个字节都没发", gate.exchanges == [], str(gate.exchanges))
+    finally:
+        running.close()
+
+    # ---- 坏实现之四：证据目录写不进去（路径上恰好是个文件）
+    blocked = work / "blocked"
+    blocked.write_text("我是一个文件，不是目录", encoding="utf-8")
+    blocked_fake = FakeTransport({PORT_GENERIC: IDENTITY_LINE}, enumerated=(PORT_GENERIC,))
+    blocked_assembly = console_server.build_live_assembly(
+        work / "runs", sessions_dir=work / "ses", imports_dir=work / "imp",
+        transport=blocked_fake.as_transport(), sniff_dir=blocked,
+    )
+    running = Running(blocked_assembly)
+    try:
+        status, payload = running.call("POST", "/api/sniff", {})
+        sniff = payload.get("sniff") or {}
+        cards = sniff.get("cards") or []
+        notes = " ".join(str(item) for item in (sniff.get("notes") or ()))
+        check("证据写不进去：仍然 202（不是 500）", status == 202, str(status))
+        check("证据写不进去：卡片与结论照旧", bool(cards), json.dumps(sniff, ensure_ascii=False)[:200])
+        check("证据写不进去：缺失写在 notes 里（不静默）", "没能落盘" in notes, notes[:200])
+    finally:
+        running.close()
+
+
+def main() -> int:
+    print("Web 验收（无硬件、无 pyserial）")
+    check_demo_pages()
+    check_live_without_bench()
+    check_live_lifecycle()
+    check_serial_settings()
+    check_sniff_transport_and_failure_modes()
+    print()
+    if FAILURES:
+        print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
+        return 1
+    print(
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 连接生命周期 / "
+        "收发 / 串口参数 / 公共传输实现与失败面）"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

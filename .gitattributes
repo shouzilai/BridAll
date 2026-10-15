@@ -1,0 +1,14 @@
+# 文本文件在版本库里一律存 LF（检出时按平台习惯，Windows 上就是 CRLF）。
+# 这样同一个提交在不同平台检出得到**内容相同**的文件，判据不会因为换行符变红。
+* text=auto
+
+# 明确当成文本的几类（其余交给 `text=auto` 按内容判断）
+*.py   text
+*.md   text
+*.json text
+*.ini  text
+
+# 二进制（本仓库目前没有，写在这儿是给将来留位置）
+*.png binary
+*.jpg binary
+*.bin binary

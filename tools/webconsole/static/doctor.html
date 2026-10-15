@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  (() => {
+    try {
+      const raw = window.localStorage.getItem('pw.theme');
+      const theme = raw === 'warm' ? 'warm' : 'dark';
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme === 'warm' ? 'light' : 'dark';
+    } catch (error) {
+      document.documentElement.dataset.theme = 'dark';
+      document.documentElement.style.colorScheme = 'dark';
+    }
+  })();
+</script>
+<title>平台体检 · 硬件工作台</title>
+<link rel="stylesheet" href="/static/doctor.css">
+</head>
+<body>
+<header class="dh-head">
+  <h1>平台体检</h1>
+  <div class="dh-tools">
+    <!-- 主题（用户口径 2026-10-12）：月亮 = 深色调试、太阳 = 暖色工作台 —— 与工作台那边同一套做法
+         （内联 SVG，不用字符画；图标不进无障碍树，含义在 aria-label/title 上）。 -->
+    <div class="theme-switch" role="group" aria-label="主题">
+      <span class="theme-label" aria-hidden="true">主题</span>
+      <button type="button" class="theme-btn" id="themeDark" data-theme-id="dark"
+              aria-pressed="true" aria-label="深色调试" title="深色调试">
+        <svg class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20.6A8.6 8.6 0 0 1 12 3.4A11 11 0 0 0 12 20.6z"></path>
+        </svg>
+      </button>
+      <button type="button" class="theme-btn" id="themeWarm" data-theme-id="warm"
+              aria-pressed="false" aria-label="暖色工作台" title="暖色工作台">
+        <svg class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2"></circle>
+          <path d="M12 2.6v2.3M12 19.1v2.3M2.6 12h2.3M19.1 12h2.3M5.5 5.5l1.6 1.6M16.9 16.9l1.6 1.6M18.5 5.5l-1.6 1.6M7.1 16.9l-1.6 1.6"></path>
+        </svg>
+      </button>
+    </div>
+    <button id="doctorReload" type="button">重新体检</button>
+    <a id="doctorDownload" href="/api/doctor?download=1" download="doctor-report.json">下载 JSON</a>
+    <button
+      id="doctorHardware"
+      type="button"
+      title="只读扫描：不打开串口、不发送字节、不操作 DTR/RTS、不复位、不烧录"
+    >检测硬件</button>
+  </div>
+  <p id="doctorFlash" class="dh-flash" role="status" aria-live="polite" hidden></p>
+</header>
+
+<main id="doctorMain" aria-live="polite">
+  <section class="dh-summary">
+    <span id="doctorResult" class="dh-badge" data-result="">…</span>
+    <span id="doctorCounts" class="dh-counts"></span>
+    <span id="doctorWhen" class="dh-when"></span>
+  </section>
+  <section class="dh-filters">
+    <span class="dh-filters-label">筛选</span>
+    <span id="doctorFilters" class="dh-filter-buttons" role="group" aria-label="按状态筛选检查项"></span>
+    <button type="button" id="doctorShowAll" class="dh-show-all" aria-pressed="false"></button>
+  </section>
+  <p id="doctorError" class="dh-error" hidden></p>
+  <div id="doctorSections"></div>
+  <section class="dh-actions" id="doctorActions" hidden>
+    <h2>下一步</h2>
+    <ul id="doctorActionList"></ul>
+  </section>
+</main>
+
+<script src="/static/doctor.js"></script>
+</body>
+</html>

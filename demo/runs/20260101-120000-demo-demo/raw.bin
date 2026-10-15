@@ -1,0 +1,14 @@
+ets DEMO 8 2016 00:22:57
+
+boot @PWINFO project=demo build_id=0x1badb002
+[I][boot] protocol=1 reset_reason=1 level=info
+record boot protocol=1 level=info
+record sample heap=179880 uptime_s=2
+record sample heap=179760 uptime_s=4
+record sample heap=179640 uptime_s=6
+[W][heap] fragmented=12 free=178900
+record sample heap=179520 uptime_s=8
+[I][io] write rec=4 bytes=512 ok=4
+record sample heap=179400 uptime_s=10
+[I][io] flush seq=4 ms=18
+demo run finished

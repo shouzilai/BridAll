@@ -1,0 +1,7 @@
+{"seq": 1, "offset": 48, "kind": "boot.protocol", "module": "boot", "severity": "I", "fields": {"protocol": 1, "reset_reason": 1, "level": "info"}, "raw": "[I][boot]"}
+{"seq": 2, "offset": 96, "kind": "metric.sys", "module": "sys", "severity": "I", "fields": {"heap": 179880, "uptime_s": 2}, "raw": "[I][sys]"}
+{"seq": 3, "offset": 144, "kind": "metric.sys", "module": "sys", "severity": "I", "fields": {"heap": 179760, "uptime_s": 4}, "raw": "[I][sys]"}
+{"seq": 4, "offset": 192, "kind": "metric.sys", "module": "sys", "severity": "I", "fields": {"heap": 179640, "uptime_s": 6}, "raw": "[I][sys]"}
+{"seq": 5, "offset": 240, "kind": "heap.fragment", "module": "heap", "severity": "I", "fields": {"fragmented": 12, "free": 178900}, "raw": "[I][heap]"}
+{"seq": 6, "offset": 288, "kind": "fs.write", "module": "io", "severity": "I", "fields": {"rec": 4, "bytes": 512, "ok": 4}, "raw": "[I][io]"}
+{"seq": 7, "offset": 336, "kind": "io.flush", "module": "io", "severity": "I", "fields": {"seq": 4, "ms": 18}, "raw": "[I][io]"}

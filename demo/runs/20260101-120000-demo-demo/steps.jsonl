@@ -1,0 +1,6 @@
+{"name": "precheck", "status": "pass", "detail": "契约、输入、工具与台架都就绪", "started_utc": "2026-01-01T12:00:00.000Z", "ended_utc": "2026-01-01T12:00:42.500Z", "duration_ms": 7000}
+{"name": "build", "status": "pass", "detail": "合成构建通过（演示数据：没有真实工具链）", "started_utc": "2026-01-01T12:00:00.000Z", "ended_utc": "2026-01-01T12:00:42.500Z", "duration_ms": 7000}
+{"name": "upload", "status": "pass", "detail": "合成写入通过（演示数据：没有真实串口）", "started_utc": "2026-01-01T12:00:00.000Z", "ended_utc": "2026-01-01T12:00:42.500Z", "duration_ms": 7000}
+{"name": "observe", "status": "pass", "detail": "采集窗口 40 s，收到 11 行", "started_utc": "2026-01-01T12:00:00.000Z", "ended_utc": "2026-01-01T12:00:42.500Z", "duration_ms": 7000}
+{"name": "decode", "status": "pass", "detail": "11 行解码完成（演示字典）", "started_utc": "2026-01-01T12:00:00.000Z", "ended_utc": "2026-01-01T12:00:42.500Z", "duration_ms": 7000}
+{"name": "assert", "status": "pass", "detail": "6 条断言全部通过", "started_utc": "2026-01-01T12:00:00.000Z", "ended_utc": "2026-01-01T12:00:42.500Z", "duration_ms": 7000}

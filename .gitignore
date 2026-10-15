@@ -1,0 +1,33 @@
+# 本机台架文件（**不进仓库**：它记着"这台电脑上工具装在哪、板子插在哪个口"）
+bench.local.json
+
+# 运行痕迹（只追加的证据与熔断账本）
+/artifacts/
+
+# 脚手架生成的接入目录：里面**不含**本机事实，想提交也可以；
+# 不想让它们进版本库就自己加一行（名字随你的 --out）
+# my_target/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 操作系统
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# 临时目录
+.tmp/
+# Web 工作台的运行痕迹（本机事实与真实证据）：只存在于本机，不进版本库。
+# ⚠️ 一律**锚定仓库根**（前导 `/`）—— 否则 `demo/runs/` 这种**演示数据**也会被一起忽略，
+#    那样克隆下来的仓库就没有演示数据了（本轮真实踩到过）。
+/runs/
+/observe-sessions/
+/observe-imports/
+/sniff/
+/.console.lock

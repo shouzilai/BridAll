@@ -1,0 +1,9 @@
+$ demo-tool build --config demo
+demo-tool 1.0.0 (synthetic)
+building demo firmware ...
+artifact: firmware.bin (demo)
+build finished: 0 error(s)
+$ demo-tool upload --port FAKE0
+writing 262144 bytes ...
+verify: hash of data verified.
+upload done

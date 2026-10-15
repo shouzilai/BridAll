@@ -1,0 +1,239 @@
+{
+  "schema": 1,
+  "run_id": "20260101-120000-demo-demo",
+  "suite": "demo",
+  "target": "demo",
+  "port": "FAKE0",
+  "started_utc": "2026-01-01T12:00:00.000Z",
+  "finished_utc": "2026-01-01T12:00:42.500Z",
+  "duration_ms": 42500,
+  "result": "PASS",
+  "failure_reason": "",
+  "observe_seconds": 40.0,
+  "reset_pulse": false,
+  "expect_sensor": false,
+  "steps": [
+    {
+      "name": "precheck",
+      "status": "pass",
+      "detail": "契约、输入、工具与台架都就绪",
+      "started_utc": "2026-01-01T12:00:00.000Z",
+      "ended_utc": "2026-01-01T12:00:42.500Z",
+      "duration_ms": 7000
+    },
+    {
+      "name": "build",
+      "status": "pass",
+      "detail": "合成构建通过（演示数据：没有真实工具链）",
+      "started_utc": "2026-01-01T12:00:00.000Z",
+      "ended_utc": "2026-01-01T12:00:42.500Z",
+      "duration_ms": 7000
+    },
+    {
+      "name": "upload",
+      "status": "pass",
+      "detail": "合成写入通过（演示数据：没有真实串口）",
+      "started_utc": "2026-01-01T12:00:00.000Z",
+      "ended_utc": "2026-01-01T12:00:42.500Z",
+      "duration_ms": 7000
+    },
+    {
+      "name": "observe",
+      "status": "pass",
+      "detail": "采集窗口 40 s，收到 11 行",
+      "started_utc": "2026-01-01T12:00:00.000Z",
+      "ended_utc": "2026-01-01T12:00:42.500Z",
+      "duration_ms": 7000
+    },
+    {
+      "name": "decode",
+      "status": "pass",
+      "detail": "11 行解码完成（演示字典）",
+      "started_utc": "2026-01-01T12:00:00.000Z",
+      "ended_utc": "2026-01-01T12:00:42.500Z",
+      "duration_ms": 7000
+    },
+    {
+      "name": "assert",
+      "status": "pass",
+      "detail": "6 条断言全部通过",
+      "started_utc": "2026-01-01T12:00:00.000Z",
+      "ended_utc": "2026-01-01T12:00:42.500Z",
+      "duration_ms": 7000
+    }
+  ],
+  "assertions": [
+    {
+      "id": "demo.identity.project",
+      "description": "设备自报的 project 就是本次选择的那一个",
+      "expected": "demo",
+      "observed": "demo",
+      "status": "pass",
+      "evidence": "decoded.log"
+    },
+    {
+      "id": "demo.boot.protocol",
+      "description": "启动协议版本稳定",
+      "expected": "1",
+      "observed": "1",
+      "status": "pass",
+      "evidence": "decoded.log"
+    },
+    {
+      "id": "demo.heap.monotonic",
+      "description": "堆没有持续下降",
+      "expected": "不下降",
+      "observed": "179880 → 179400",
+      "status": "pass",
+      "evidence": "decoded.log"
+    },
+    {
+      "id": "demo.io.roundtrip",
+      "description": "写入与回读计数一致",
+      "expected": "rec=4",
+      "observed": "rec=4 ok=4",
+      "status": "pass",
+      "evidence": "decoded.log"
+    },
+    {
+      "id": "demo.decode.lines",
+      "description": "解码行数与原始行数一致",
+      "expected": "11",
+      "observed": "11",
+      "status": "pass",
+      "evidence": "decoded.log"
+    },
+    {
+      "id": "demo.run.result",
+      "description": "整份运行的结论是 pass",
+      "expected": "pass",
+      "observed": "pass",
+      "status": "pass",
+      "evidence": "decoded.log"
+    }
+  ],
+  "assertion_summary": {
+    "total": 6,
+    "passed": 6,
+    "failed": 0,
+    "failed_ids": []
+  },
+  "firmware": {},
+  "client": {
+    "id": "demo",
+    "label": "演示数据"
+  },
+  "events_summary": {
+    "total": 7,
+    "counts": {
+      "boot.protocol": 1,
+      "metric.sys": 4,
+      "heap.fragment": 1,
+      "fs.write": 1,
+      "io.flush": 1
+    },
+    "unparsed": 0,
+    "errors": [],
+    "warnings": []
+  },
+  "panic": {
+    "verdict": "none",
+    "kinds": [],
+    "faults": 0,
+    "addresses": 0,
+    "resolved": 0,
+    "unresolved": 0,
+    "error": null,
+    "note": "演示数据：没有崩溃"
+  },
+  "dictionary_used": {
+    "origin": "演示字典（手写，不含任何真实 token）",
+    "entries": 3,
+    "exact_match": false
+  },
+  "artifacts": {
+    "manifest.json": {
+      "bytes": 648,
+      "sha256": "70ae6de6ee72faf9033676b0d075004b65a84a9ac6105e88f3be42571c6f6117"
+    },
+    "raw.bin": {
+      "bytes": 454,
+      "sha256": "f98c8d259ece061b0e4f3cd1af489b939685238fc37803f6f13c3d5448e23449"
+    },
+    "decoded.log": {
+      "bytes": 539,
+      "sha256": "44007f42ec90d1ac425c09ab4e8fb648eaaaffc75dd8c4b6f38acff60285033c"
+    },
+    "tool.log": {
+      "bytes": 253,
+      "sha256": "ae50469d448bc8d66b5f55fba4e6f85e43833866daae093c78568664d58172fe"
+    },
+    "events.jsonl": {
+      "bytes": 4357,
+      "sha256": "4adc6ba574cbeb2099bdb0e7da0e846efeb49c71c118c20b64ec564c7c812d79"
+    },
+    "steps.jsonl": {
+      "bytes": 1195,
+      "sha256": "e87f1cb6465566bf50b6d2d0dbfe7b18098f09b083bd6e8f0a287d268f29c064"
+    },
+    "app_events.jsonl": {
+      "bytes": 1194,
+      "sha256": "ef16c763f4555ec1a2d4f85d4792b14e6478f40113bde0544225353870fd34c5"
+    },
+    "metrics.jsonl": {
+      "bytes": 644,
+      "sha256": "3dbf3658dfebaf344c803eb74dfb68f72b51ac9b4c511694109619c55819d2e9"
+    },
+    "report.json": {
+      "bytes": 6900,
+      "sha256": "85410b2892ae9359e0c55c6410948de09bb52f2d2449b03948a84cb8946a9209"
+    }
+  },
+  "evidence": {
+    "manifest.json": {
+      "purpose": "身份与运行元信息：这一份 run 是怎么起出来的（演示数据）",
+      "bytes": 648,
+      "sha256": "70ae6de6ee72faf9033676b0d075004b65a84a9ac6105e88f3be42571c6f6117"
+    },
+    "raw.bin": {
+      "purpose": "一手证据：设备说出来的字节（演示数据，由本次生成）",
+      "bytes": 454,
+      "sha256": "f98c8d259ece061b0e4f3cd1af489b939685238fc37803f6f13c3d5448e23449"
+    },
+    "decoded.log": {
+      "purpose": "解码结果：演示字典把 token 换成可读行",
+      "bytes": 539,
+      "sha256": "44007f42ec90d1ac425c09ab4e8fb648eaaaffc75dd8c4b6f38acff60285033c"
+    },
+    "tool.log": {
+      "purpose": "外部工具的完整输出（演示数据：合成的一小段）",
+      "bytes": 253,
+      "sha256": "ae50469d448bc8d66b5f55fba4e6f85e43833866daae093c78568664d58172fe"
+    },
+    "events.jsonl": {
+      "purpose": "编排事件流（页面顶栏那一路）",
+      "bytes": 4357,
+      "sha256": "4adc6ba574cbeb2099bdb0e7da0e846efeb49c71c118c20b64ec564c7c812d79"
+    },
+    "steps.jsonl": {
+      "purpose": "六个步骤的起止与结论",
+      "bytes": 1195,
+      "sha256": "e87f1cb6465566bf50b6d2d0dbfe7b18098f09b083bd6e8f0a287d268f29c064"
+    },
+    "app_events.jsonl": {
+      "purpose": "结构化事件（项目自带的记录格式）",
+      "bytes": 1194,
+      "sha256": "ef16c763f4555ec1a2d4f85d4792b14e6478f40113bde0544225353870fd34c5"
+    },
+    "metrics.jsonl": {
+      "purpose": "指标序列（长格式：表头行 + 一行一个点）",
+      "bytes": 644,
+      "sha256": "3dbf3658dfebaf344c803eb74dfb68f72b51ac9b4c511694109619c55819d2e9"
+    },
+    "report.json": {
+      "purpose": "结论与索引：结果、断言、每步耗时、证据清单",
+      "bytes": 6900,
+      "sha256": "85410b2892ae9359e0c55c6410948de09bb52f2d2449b03948a84cb8946a9209"
+    }
+  }
+}

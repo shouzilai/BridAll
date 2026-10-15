@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "session_id": "20260101-120500-live-fake",
+  "mode": "live",
+  "device": {
+    "key": "fake",
+    "label": "演示设备",
+    "port": "FAKE0",
+    "role": "demo",
+    "boundary": "演示目标：不接真实硬件"
+  },
+  "port": "FAKE0",
+  "baud": 115200,
+  "read_only": true,
+  "modem_lines_touched": false,
+  "opened_utc": "2026-01-01T12:05:00.000Z",
+  "closed_utc": "2026-01-01T12:05:12.000Z",
+  "end_reason": "演示会话（无硬件，合成数据）",
+  "host": {
+    "platform": "demo",
+    "python": "3.11",
+    "python_executable": ""
+  },
+  "capabilities": {},
+  "platform": {},
+  "totals": {
+    "raw_lines": 14,
+    "rx_bytes": 454,
+    "tx_bytes": 0
+  },
+  "artifacts": [
+    "manifest.json",
+    "raw.bin",
+    "io_events.jsonl",
+    "decoded.log",
+    "app_events.jsonl"
+  ]
+}

@@ -1,0 +1,11 @@
+[12:00:02.100] boot protocol=1 level=info reset_reason=1
+[12:00:02.240] [boot] 设备开始记录（演示数据）
+[12:00:04.010] [sample] heap=179880 uptime_s=2
+[12:00:06.020] [sample] heap=179760 uptime_s=4
+[12:00:08.030] [sample] heap=179640 uptime_s=6
+[12:00:08.900] [heap] fragmented=12 free=178900
+[12:00:10.040] [sample] heap=179520 uptime_s=8
+[12:00:10.880] [io] write rec=4 bytes=512 ok=4
+[12:00:12.050] [sample] heap=179400 uptime_s=10
+[12:00:12.700] [io] flush seq=4 ms=18
+[12:00:14.000] [run] observe window closed

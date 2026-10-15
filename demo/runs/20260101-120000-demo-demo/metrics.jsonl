@@ -1,0 +1,5 @@
+{"schema": 1, "type": "header", "t_axis": "设备 uptime（秒，重启后归零）", "generated_by": "webconsole/metrics.py", "sample_counts": {"metric.sys": 4, "heap.fragment": 1, "fs.write": 1}, "restarts": 0, "metrics": [{"key": "heap", "unit": "bytes", "label": "空闲堆"}]}
+{"type": "sample", "seq": 1, "t": 2, "values": {"heap": 179880}, "source": "metric.sys"}
+{"type": "sample", "seq": 2, "t": 4, "values": {"heap": 179760}, "source": "metric.sys"}
+{"type": "sample", "seq": 3, "t": 6, "values": {"heap": 179640}, "source": "metric.sys"}
+{"type": "sample", "seq": 4, "t": 10, "values": {"heap": 179400}, "source": "metric.sys"}

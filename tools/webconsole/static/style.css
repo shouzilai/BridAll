@@ -1,0 +1,1934 @@
+:root {
+  color-scheme: dark;
+  --bg: #10141b;
+  --panel: #171d26;
+  --panel-2: #1d2530;
+  --line: #2a3442;
+  --text: #dde4ee;
+  --control-text: #dde4ee;
+  --focus: #4c9ef8;
+  --muted: #8d9aab;
+  --accent: #4c9ef8;
+  /* ---- 成功 / 定位：语义色**只在这里定义**（用户口径 2026-10-13）----
+     `--ok`         成功（PASS）的文字与主状态；
+     `--ok-border`  徽标/卡片边框（比 --ok 深一档：浅底上也站得住，不刺眼）；
+     `--pass`       旧名字，**只作别名**（老规则还写着它，值不许再另立一份）；
+     `--loc*`       **定位**语义（被定位的证据区间 / 当前中心行 / “定位中”的阶段卡）：
+                    与 --ok 同族，但只表达“定位到这一处”，不表示“通过”，也不与 FAIL/WARN 混；
+     `--fail-border` / `--warn-border` 同族的边框色（与文字色收在一处，组件里不许写死）。
+     `--accent-line` 中性强调的**线条**色（徽标边、窗口描边、工具条按钮）：深色下就是原来的蓝，
+                    暖色下换成暖色线 —— 暖色屏幕上不再出现蓝（用户口径 2026-10-13）。 */
+  --ok: #46c07a;
+  --pass: var(--ok);
+  --ok-border: #2f8a58;
+  --loc: #46c07a;
+  --loc-bg: rgba(70, 192, 122, .12);
+  --loc-bg-strong: rgba(70, 192, 122, .22);
+  --fail: #f0605f;
+  --fail-border: #6b2f30;
+  --warn: #e2b341;
+  --warn-border: #6b5723;
+  --accent-line: #2c5a8c;
+  --topbar-bg: #131922;
+  --field-bg: #131922;
+  --field-border: var(--line);
+  --panel-shadow: rgba(0, 0, 0, .42);
+  --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  /* 日志视口至少 50 行：高度不随日志增长，只在内部滚动；
+     收起窗口里的搜索/筛选行时，省下的高度会分给日志区（所以是 min-height 而不是 height）。 */
+  --log-lines: 50;
+  --log-line-h: 17px;
+  /* 未收起时窗口头的高度：CSS 里写的是**保守估计**，实测值更矮（这里由 JS 量出来覆盖）。
+     写大了只是少显示一行日志，写小了正文就会被吸顶的窗口头盖住 —— 所以宁可先大。 */
+  --pane-head-h: 100px;
+  /* 收起一行“搜索/筛选”省下的高度，以及当前一共省下多少（由 JS 按收起的窗口数设置）。
+     累计值比实际让出的多（四个窗口一起拉伸，高度由最高的那个决定），
+     多出来的算“奖励”：栅格高度预算里再加上它，让收起筛选行真的多显示几行。 */
+  --pane-fold-step: 48px;
+  --pane-fold-gain: 0px;
+  /* 一行布局里的宽度：折叠后的标签条与分隔条。
+     ⚠️ 标签条明显窄于“最小可用宽度”（--pane-min-w），不然收起来反而占地。 */
+  --rail-w: 26px;
+  --bar-w: 6px;
+  /* D8：设备卡片之间的间隙（卡片宽度 = 可用宽 − 两个间隙 再除以 3 ⇒
+     这个值只有一处，JS 的“逐卡滚动”也用它算一步有多远）。 */
+  --sniff-gap: 8px;
+  /* 所有滚动条的宽度（用户要求：缩到默认的一半）。
+     实测本环境默认 12 px（页面与四个日志窗口一样）→ 6 px。 */
+  --scrollbar-w: 6px;
+  /* 两处“小窗”的行高（PW-UX-001 第 1/3 条：结果列表最多五行、历史运行最多十行）。
+     实测值：命中的行 24px（11.5px 字号 + 内边距）；历史运行的行 50px（证据链接会换行）、
+     表头 30px。写在这儿是为了封顶高度能用“行数”表达，而不是散在两条规则里的魔数。 */
+  --fs-hit-h: 24px;
+  --run-row-h: 50px;
+  --runs-head-h: 30px;
+  /* 四个入口（自动验证 / 实时观察 / 离线诊断 / 平台体检）的公共尺寸：**等宽等高**。
+     2026-10-12：先定 96×30（紧凑导航），当晚按用户口径“尺寸增大 30%”改成 **125×39**
+     （96×1.3 / 30×1.3）—— 它们现在与页头标题**同一水平面**，所以不再是一行“小标签”。
+     宽度只由这里定：标签长短或有没有图标都不参与该项尺寸。 */
+  --nav-w: 125px;
+  --nav-h: 39px;
+  /* 吸顶控件之下**真正看得见**的正文高度 = 视口 - 工作台那一栏 - 夹在中间那几行 - 窗口头（留 30 px 余量）。
+     ⚠️ 它是“窗口正文的硬上限”：只要正文不超过它，滚页面时窗口头就不会盖住日志
+     （否则会出现“内容明明不多、但最上面几行永远看不到”——用户报过）。
+     ⚠️ `--pane-chrome-gap` 是**工作台那一栏与四窗之间**那几行（全文件搜索栏 + 最多五行的结果列表、
+     “页面是旧的”提示条）的高度，由 JS 量出来（`syncPaneViewportBudget()` → `PANE_GAP_NODES`）。
+     不减它，四窗就永远比一屏高一点：用户报过“用了搜索整个文件、底下出了结果之后点阅读位，
+     四窗下面还是被切掉”。 */
+  --pane-chrome-gap: 0px;
+  --pane-visible-h: max(240px, calc(100vh - var(--ws-head-h, 0px) - var(--pane-chrome-gap) - var(--pane-head-h) - 30px));
+  /* 阅读位（用户口径 2026-10-12）：点一下之后正文高度由 JS **实测**写进 --pane-reading-h
+     （让当前窗格的底边正好落在可视区底部）；没点过就用上面那条预算公式。
+     只留一个入口：改高度只能走 --pane-body-max。 */
+  --pane-body-max: var(--pane-reading-h, var(--pane-visible-h));
+  /* 正文的下限仍是 50 行，但屏幕装不下时退化成上限值：宁可少显示几行，
+     也不能让内容藏在窗口头后面 —— 那部分永远滚不出来。 */
+  --pane-body-min: min(calc(var(--log-lines) * var(--log-line-h)), var(--pane-body-max));
+  /* 正文的下限仍是 50 行，但屏幕装不下时退化成上限值：宁可少显示几行，
+     也不能让内容藏在窗口头后面 —— 那部分永远滚不出来。 */
+  --pane-body-min: min(calc(var(--log-lines) * var(--log-line-h)), var(--pane-body-max));
+  /* 字号与字体是“阅读偏好”，由页面操控（存在浏览器本地）。 */
+  --log-font-size: 12px;
+  --log-font-family: var(--mono);
+}
+
+:root[data-theme="warm"] {
+  color-scheme: light;
+  --bg: #fbf6ef;
+  --panel: #fffdf9;
+  --panel-2: #f5ecdf;
+  --line: #e8dccb;
+  --text: #4a3728;
+  --control-text: #4a3728;
+  --focus: #a84e0b;
+  --muted: #725b4b;
+  --accent: #a84e0b;
+  /* 成功 / 定位在**浅底**上的取值：深绿（对比度够、不刺眼，不用高饱和纯绿，也不与
+     FAIL/WARN 混）。⚠️ 日志窗口在暖色下仍是**深色工作区** ⇒ 那里面另有一份取值，
+     见下面 `.log-pane` 那一段（日志窗口在两种主题下必须是同一套颜色语义）。 */
+  --ok: #1d6f42;
+  --ok-border: #2f7a4c;
+  --loc: #1d6f42;
+  --loc-bg: rgba(35, 114, 69, .10);
+  --loc-bg-strong: rgba(35, 114, 69, .18);
+  --fail: #b13d32;
+  --fail-border: #9a352a;
+  --warn: #885000;
+  --warn-border: #7a4a00;
+  --accent-line: #b26b2a;
+  /* “当前窗口”那一圈描边：暖色下跟着暖色走（深色主题那个蓝不许漏到浅底上来）。 */
+  --pane-active-border: #c2762f;
+  --pane-active-glow: 0 0 18px -6px rgba(217, 119, 42, .75);
+  --topbar-bg: #f8efe4;
+  --field-bg: #fffaf5;
+  --field-border: #e4d3bb;
+  --panel-shadow: rgba(120, 79, 43, .12);
+}
+
+/* 滚动条：页面（html）与四个日志窗口、以及任何其他可滚区域统一缩窄。
+   用户要求“所有页面浏览展示条宽度都设成当前的一半”，实测默认 12 px → 6 px。
+   ⚠️ 只用 ::-webkit-scrollbar，不要再写 scrollbar-width: thin ——
+   Chromium 一旦看到标准的 scrollbar-width 就会拿它盖掉这里的宽度，那样就不是 6 px 了。 */
+::-webkit-scrollbar {
+  width: var(--scrollbar-w);
+  height: var(--scrollbar-w);
+}
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #3a4a5e;
+  border-radius: calc(var(--scrollbar-w) / 2);
+}
+::-webkit-scrollbar-thumb:hover { background: #4d6a8a; }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+h1, h2 { margin: 0; font-weight: 600; }
+
+.muted { color: var(--muted); }
+
+/* ------------------------------------------------------------------ topbar */
+/* 页头一行三块：品牌（左）/ 四个入口（中）/ 主题（右）。
+   ⚠️ 四个入口自 2026-10-12 起就住在这里（用户口径：“与标题在同一水平面”）——
+   之前它们是页头下面另起一条 `modebar` 面板。 */
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--topbar-bg);
+}
+
+.brand { display: flex; gap: 10px; align-items: center; }
+
+.brand .logo {
+  display: grid;
+  place-items: center;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(140deg, #2f6fd0, #4c9ef8);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: .5px;
+}
+
+.brand h1 { font-size: 15px; }
+
+.doctor-link {
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.doctor-link:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 页头右上角那一组（主题）：它是“全局显示”，不归任何一屏。
+   ⚠️ 2026-10-12 起这里只有主题两个图标按钮 —— 「详情」那个下拉框被用户口径删掉了
+   （状态句固定在简洁档；三档的句子机器仍在 `app.js` 里，由模型回归驱动）。 */
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+/* 主题：月亮 = 深色调试、太阳 = 暖色工作台（用户口径 2026-10-12）。
+ * 两个按钮**同宽同高**（图标那个尺寸是固定的），按下态用主题色画 —— 换主题时不挪旁边的控件。 */
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+}
+
+.theme-btn[aria-pressed="true"] { border-color: var(--accent); background: #1c2b40; color: var(--accent); }
+
+.theme-ico { width: 15px; height: 15px; }
+
+.tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* ---------------------------------------------- 工作条（模式驱动的排布，2026-10-10）
+ * ⚠️ 2026-10-10 跟进（两屏对齐，用户口径）：**两屏同形** —— 共享设备栏占整行在第 1 行
+ *    （嗅探按钮 + 左侧本屏状态 + 右侧卡片），本屏控制栏在第 2 行。
+ *    之前实时观察是“控制栏在左、设备栏在右”的两列 ⇒ 同一张卡片在两屏宽差一倍（262 / 141 px），
+ *    而 D8 §11 要的是“通信口选择与设备连接/身份状态组成同一横向区域”。
+ * 离线诊断：只有会话那一栏（设备栏在那屏本来就是隐藏的）。
+ * ⚠️ 排布只写在这里：面板自己不知道自己在第几行（`#workbar[data-mode=…]` 是唯一开关）。 */
+#workbar { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+#workbar[data-mode="auto"] #deviceBar { grid-column: 1; grid-row: 1; }
+#workbar[data-mode="auto"] #autoPanel { grid-column: 1; grid-row: 2; }
+#workbar[data-mode="live"] #deviceBar { grid-column: 1; grid-row: 1; }
+#workbar[data-mode="offline"] #offlinePanel { grid-column: 1; grid-row: 1; }
+
+/* 用户口径（2026-10-10）：顶栏那排“板 A / 板 B / STM32F103C8 …”设备芯片整块删掉（含 `.chip` 与
+ * 它那个 `pulse` 动画）—— 设备事实一律以设备嗅探卡片为准，不再用本机台架的名字。 */
+
+/* -------------------------------------------  / D8-R：设备控制面板（两屏各一个）
+ * requirements §11.1（2026-10-11 冻结）：通信口卡片、本屏状态/动作与紧凑数据行在**同一个
+ * 外框**里，不再是上下两条互不相连的通栏面板。
+ *   上半区 `.cp-top`：左 ~70%（选择通信口 + 嗅探 + 设备卡）｜右 ~30%（本屏状态与动作）
+ *   底部 `.cp-bottom`：本屏的紧凑数据/动作行（一条分隔线隔开，不是另一个面板）
+ * 窄屏（≤900 px）上半区改上下排列 —— 但**仍属同一个外框**（§11.1 末条）。 */
+.controlpanel { display: flex; flex-direction: column; padding: 6px 10px 8px; min-width: 0; }
+.cp-top {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
+  gap: 8px 12px;
+  align-items: start;
+  min-width: 0;
+}
+.cp-pick { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cp-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+.cp-title { font-size: 12px; color: var(--muted); }
+.cp-side {
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0; padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+.cp-side-live { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cp-side-live[hidden] { display: none; }
+.cp-side .actions { gap: 6px; }
+/* 底部紧凑行：与上半区同一外框（只隔一条线）；它也是「详情」浮层的锚。 */
+.cp-bottom {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+  position: relative;
+}
+.cp-row { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; min-width: 0; }
+.cp-row[hidden] { display: none; }
+/*  / L4b：受控用例目录（只在实时观察那一屏显示）。
+   布局与四个证据窗无关，但它是 `.cp-bottom` 的一个兄弟行 ⇒ 必须登记进 `PANE_GAP_NODES`，
+   否则四窗的高度预算会少算这一行（D5 踩过一次）。 */
+.live-tests { flex-direction: column; align-items: stretch; gap: 4px; }
+.live-tests-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.live-tests-title { font-weight: 600; }
+.live-tests-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.live-test-case { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.live-test-case > label { cursor: pointer; }
+.live-test-case > input:disabled + label { cursor: not-allowed; opacity: 0.65; }
+.cp-more { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding-left: 2px; }
+.cp-more[hidden] { display: none; }
+
+.device-pick { font-size: 12px; color: var(--muted); display: inline-flex; gap: 8px; align-items: center; }
+/* 右列里的端口/身份就绪结论（自动验证屏）：只写事实，不给动作。 */
+.port-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex; flex-wrap: wrap; gap: 2px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* 实时观察右列：连接状态 + 三个动作（都在同一个外框里）。 */
+.live-status[hidden] { display: none; }
+.live-status .run-id { font-size: 12px; }
+/* ⚠️ D8-R：右列只占 ~30%（1440 宽实测 327 px）⇒ 里面的下拉框必须**能压**。
+ * 压不住的话实时观察屏会把页面撑出横向滚动条（实测 docW 1313 > client 1146，溢 167 px）。
+ * 下拉框的固有宽度由最长选项决定，所以 `min-width:0` 与 `max-width:100%` 缺一不可。 */
+.cp-side-live { min-width: 0; }
+.cp-side-live .field { min-width: 0; flex-wrap: wrap; }
+.cp-side-live select, .cp-side-live input { min-width: 0; max-width: 100%; }
+/* 需求 §6.10：那一行串口参数（波特率 / 数据位 / 校验位 / 停止位）。
+   与旁边的按钮同一行，放不下就换行；不另占一块面板。 */
+.serial-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.serial-row .field select { min-width: 4.5em; }
+/* 每一项是一个整体：空间不够就**整项换行**，不从中间断开（否则读数会被折成两截）。 */
+.port-status > .port-item { flex: 0 0 auto; white-space: nowrap; }
+.port-status > .port-item[data-kind="ok"] { color: var(--pass); }
+.port-status > .port-item[data-kind="warn"] { color: var(--warn); }
+.port-status > .port-item[data-kind="fail"] { color: var(--fail); }
+.port-status > .port-port { font-family: var(--mono); color: var(--text); }
+.port-status > .port-why { flex: 1 1 100%; white-space: normal; font-size: 11px; }
+
+/* D8：嗅探按钮三态（嗅探 / 正在嗅探 / 嗅探完成）**尺寸固定**：
+   尺寸不许由文字长度决定（否则点一下就整条横区跳一下）。旋转图标只转，不占额外地方。 */
+#sniffBtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 116px; height: 28px; padding: 0 10px;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+/* ⚠️ 旋转图标是**纯 CSS 圆环**（没有字符）：界面字符不能进 `textContent`
+   —— 否则读屏器和“按文本比对”的判据都会被它污染（本仓把 ×N / 行号也放在伪元素里）。 */
+#sniffBtn .sniff-spin {
+  display: none;
+  width: 12px; height: 12px; box-sizing: border-box;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+}
+#sniffBtn[data-state="busy"] .sniff-spin { display: inline-block; animation: sniff-spin 1.1s linear infinite; }
+#sniffBtn[data-state="done"] { border-color: var(--pass); color: var(--pass); }
+@keyframes sniff-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+/* 减小动态：取消旋转（“正在嗅探”仍然能从文字与禁用态看出来）。 */
+@media (prefers-reduced-motion: reduce) {
+  #sniffBtn[data-state="busy"] .sniff-spin { animation: none; }
+}
+
+/* 每张卡片是一个原生 radio（`<label><input type=radio>`）⇒ 高亮/勾选/方向键/读屏器
+ * 用浏览器自带的，不自己造一套交互。“选中”同时给三种线索：边框、底色、右上角的 ✓
+ * —— 只靠颜色的话，色觉不同的用户看不出选中的是哪一个。
+ * ⚠️ D8：这一条**一屏最多完整展示 3 张**，更多的在里面横向滚（滚轮逐卡移动 + 吸附），
+ *    所以不再折行、也不摆左右移动按钮。 */
+.sniff-cards {
+  /* ⚠️ D8-R：它现在住在**竖向**的 `.cp-pick` 里，所以 flex 只能是 `0 0 auto`
+   *（旧写法 `1 1 320px` 在竖向容器里是**高度** 320 px ⇒ 卡片被拉成 306 px 高）。 */
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex; flex-wrap: nowrap; gap: var(--sniff-gap);
+  overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-x: contain;   /* 滚到两头不要把页面带走 */
+  scroll-snap-type: x mandatory;
+  padding: 6px 0 4px;
+}
+.sniff-cards[hidden] { display: none; }
+/* D8-R：设备卡只常驻**两层**主要信息（§11.1）：
+ *   ① `通信口 + 设备名称`；② `身份状态 + 软件版本`。
+ * 其余（序号说明、最近活动与历史会话、收到字节、可用固件清单、拒绝原因、逐份固件结论）
+ * 全在悬停 `title` 里 —— 不再用五六行卡片挤占控制区。 */
+.sniff-card {
+  position: relative;
+  display: flex; flex-direction: column; gap: 1px;
+  /* “一次最多完整展示 3 张”：每张 = （可用宽 − 两个间隙）/ 3；
+     窄屏由 media query 改成 2 张 / 1 张。 */
+  flex: 0 0 calc((100% - 2 * var(--sniff-gap)) / 3);
+  min-width: 0; max-width: none;
+  scroll-snap-align: start;
+  padding: 6px 10px 6px 30px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sniff-card input[type="radio"] {
+  position: absolute; left: 9px; top: 11px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sniff-card:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.sniff-card.selected { border-color: var(--accent); background: var(--panel-2); }
+/* ⚠️ 勾选不只靠颜色：选中的卡片右上角多一个 ✓（色觉不同也看得出来）。 */
+.sniff-card.selected::after {
+  content: "✓";
+  position: absolute; right: 8px; top: 6px;
+  color: var(--accent); font-weight: 700;
+}
+
+.sniff-card.unusable { opacity: .6; cursor: not-allowed; }
+.sniff-card.unusable input[type="radio"] { cursor: not-allowed; }
+
+.sniff-card .sniff-head { display: flex; gap: 5px; align-items: baseline; min-width: 0; }
+.sniff-card .sniff-num { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+.sniff-card .sniff-port { font-weight: 600; font-family: var(--mono); flex: 0 0 auto; }
+/* 设备名称（设备自报的芯片 + 项目，一个字都没改造）：一行、过长就省略，细节在悬停里。 */
+.sniff-card .sniff-name {
+  font-family: var(--mono); font-size: 11px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.sniff-card .sniff-state { font-size: 12px; color: var(--muted); }
+.sniff-card[data-state="confirmed"] .sniff-state { color: var(--pass); }
+.sniff-card[data-state="conflict"] .sniff-state { color: var(--fail); }
+.sniff-card .sniff-state { font-size: 12px; color: var(--muted); }
+
+
+/* --------------------------------------------------------------- 运行模式 */
+.autotest-picker { padding: 0 10px 9px; overflow-x: auto; }
+.autotest-picker table, .test-results { width: 100%; border-collapse: collapse; font-size: 11px; }
+.autotest-picker th, .autotest-picker td, .test-results th, .test-results td {
+  padding: 5px 7px; border-top: 1px solid var(--line); text-align: left; vertical-align: top;
+}
+.autotest-picker code { color: var(--muted); }
+.test-params { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: center; }
+.test-params label { display: inline-flex; gap: 4px; align-items: center; }
+.test-region { color: var(--warn); font-family: var(--mono); }
+.test-results [data-status="PASS"] { color: var(--pass); }
+.test-results [data-status="FAIL"], .test-results [data-status="ERROR"] { color: var(--fail); }
+.test-results [data-status="CANCELLED"], .test-results [data-status="SKIPPED"] { color: var(--warn); }
+
+/* 四个入口：与标题同一水平面（用户口径 2026-10-12）。
+   ⚠️ 旧的那条面板内边距规则（`.mode-` 开头的那个）已随面板一起删 —— 面板本身没了。
+   ⚠️ 模式切换本身不许发任何动作（不 build/upload/reset、不碰 dtr/rts、不清设备数据）：
+   事件处理只改 app.mode + 重渲染，并最多一次 GET /api/state。 */
+.modes {
+  display: grid;
+  grid-template-columns: repeat(4, var(--nav-w));
+  gap: 6px;
+  align-items: center;
+}
+
+/* D8-R（§11.1）：“模式选择是紧凑导航，不是三张占满整行的大功能卡；模式说明不得决定导航项宽高。”
+ * ⇒ 图标 + 标签（一行、同高）；说明不再进 DOM（要解释就写进文档，而不是摆在导航里）。
+ * 2026-10-12（用户口径）：平台体检也挤进这一行 ⇒ 四项**等宽等高**：
+ *   宽度只由 `--nav-w` 定（不由标签长短或有没有图标决定），高度由 `--nav-h` 定。 */
+.mode-btn,
+.modes > .doctor-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: var(--nav-w);
+  height: var(--nav-h);
+  padding: 0 10px;
+  border-radius: 11px;
+  font-size: 16px;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--text);
+}
+
+/* 图标固定 20 px：它不参与“这一项有多宽”的计算（等宽那件事全揽在上面那两条里）。 */
+.nav-ico { width: 20px; height: 20px; flex: 0 0 auto; }
+
+.mode-btn[aria-pressed="true"] { border-color: var(--accent); background: #1c2b40; }
+
+/* 离线诊断那一屏的状态行（与实时观察的底部紧凑行无关，只是沿用同一套排版）。 */
+.observe-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  padding: 7px 10px;
+}
+
+/* 实时观察底部那一行里的每一项都是一个整体，整项换行不从中间断开。 */
+.observe-stat {
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* D8：紧凑计数 `TX 348 B | RX 12.6 KiB`：等宽数字 + **定宽**每格 ⇒
+   数字从 9 变 10 位、或从 B 跳到 KiB，整行都不会左右抽一下。 */
+.observe-counts {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  /* 一格多宽：最长的那一种值是 `RX 999.9 MiB`（12 字符）。 */
+  --observe-count-w: 12ch;
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.observe-count { display: inline-block; width: var(--observe-count-w); text-align: right; }
+.observe-sep { color: var(--muted); }
+/* 搬进工作台那一栏之后（用户口径 2026-10-12），位置变了但**宽度契约不变**：
+   `TX 0 B` 与 `TX 12.6 KiB` 必须占同样宽，右边的阅读位/收起筛选行/字号**一个像素都不动**。
+   ⚠️ 这里必须写 `width`，不能写 `min-width`：写 min-width 时整组宽度 = max(下限, 内容)，
+   内容一超过下限就把右边的控件推走 —— 真机实测「RX 995 B → RX 1.0 KiB → RX 12.6 KiB」
+   每过一档推 5 px，屏幕上就是工作台那一栏在抖（用户 2026-10-12 报的“明显闪烁”）。
+   定宽 = 2 格 + 分隔符(1ch) + 两个间隙(2×6px)，右对齐 ⇒ 组内文字变长只往**左**长。
+   极端值放不下时裁掉（`overflow: hidden`），完整值始终在 title 上。 */
+.ws-tools .observe-counts {
+  flex: 0 0 auto;
+  width: calc(var(--observe-count-w) * 2 + 1ch + 13px);
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+/* 字号那一格同理（同一类抖动）：`12 px` → `9 px` 少一个字符，
+   它左边的 A−/A+ 与右边的字体下拉不该跟着挪。可选值是 9～20 ⇒ 6ch 足够宽、永不超。 */
+.ws-stat#fontSize { display: inline-block; min-width: 6ch; text-align: right; }
+.observe-note { font-size: 11px; color: var(--warn); flex: 1 1 320px; }
+
+/* 身份**结论** chip（用户口径 2026-10-11 验收 P1：主界面仅保留身份结论）
+   —— 屏幕上只有几枚短 chip，不是一段长文本；诊断依据在「详情」与悬停里。
+   颜色只表达“行/要留意/不行”，不代替文字（不靠颜色单独表意）。 */
+.observe-ident {
+  display: inline-flex; flex-wrap: wrap; gap: 3px 6px; align-items: center;
+  min-width: 0;
+}
+.ident-chip {
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+}
+.ident-chip[hidden] { display: none; }
+.ident-chip[data-kind="ok"] { color: var(--ok); border-color: var(--ok-border); }
+.ident-chip[data-kind="warn"] { color: var(--warn); border-color: #5d512f; }
+.ident-chip[data-kind="fail"] { color: var(--fail); border-color: #5d2f2f; }
+.ident-more {
+  font-size: 11px; line-height: 18px; height: 20px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  white-space: nowrap;
+}
+.ident-more:hover { border-color: var(--accent); color: var(--accent); }
+.ident-more[hidden] { display: none; }
+/* 「详情」是**浮层**（用户口径 2026-10-11 验收 P1）：展开它**不许推动任何布局** ——
+ * 实测 inline 展开会把设备栏从 222 px 撑到 912 px（那段原文有 800 多字，挤在 320 px 的
+ * 状态列里要折 50 行）。浮层给足可读宽度，高度封顶、内部滚动，`z-index` 盖在卡片上。
+ * ⚠️ 不点「详情」时它是 `hidden` ⇒ 连一个像素都不占。 */
+.ident-detail {
+  position: absolute;
+  /* 锚在**底部行**（`.cp-bottom`）上：左右贴齐面板内宽 ⇒ 无论宽窄都不超视口，
+   * 也不会像上一版那样把页面撑出横向滚动条（实测溢 5 px）。 */
+  top: calc(100% - 6px);
+  left: 0;
+  right: 0;
+  z-index: 8;
+  max-height: min(40vh, 240px);
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+  white-space: normal;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.ident-detail[hidden] { display: none; }
+
+/* P1 层级：用户最需要的“通信口 / 连接状态 / TX / RX”要压过诊断细节。
+   计数与状态用正文色 + 12px（诊断细节是 11px 的 muted 色）。 */
+.observe-counts { font-size: 12px; color: var(--text); }
+.observe-stat { font-size: 12px; }
+
+@media (max-width: 900px) {
+  /* §11.1：窄屏允许把左右两区改上下排列 —— 但**仍属同一个控制面板**（不另起面板）。 */
+  .cp-top { grid-template-columns: minmax(0, 1fr); }
+  .cp-side { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-top: 6px; }
+  .sniff-card { flex-basis: calc((100% - var(--sniff-gap)) / 2); }
+}
+@media (max-width: 640px) {
+  .sniff-card { flex-basis: 100%; }
+}
+
+/* 四个入口在窄屏上排成 2×2：等宽等高那条不变（同一对 --nav-w/--nav-h），
+   只是每行放两个 —— 4×125 + 3×6 = 518 px，视口窄于 ~700 px（内宽 ~560）时一行就放不下了。 */
+@media (max-width: 700px) {
+  .modes { grid-template-columns: repeat(2, var(--nav-w)); }
+}
+
+/* 解码窗底部那块（常驻说明 + 命令输入行）：它是**流式**的，高度自己说了算；
+   正文靠 --pane-foot-h（JS 实测写进来）把高度让出来。
+   `margin-top: auto` 让它贴住窗口底边：窄屏 2×2 时同行那个窗口的头会折行把这一行拉高，
+   正文有上限、剩下的几像素就落在**正文与底栏之间**（而不是 dock 与窗口底边之间露一条缝）。 */
+.pane-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+}
+
+/* 命令框：格式选择 + 输入 + 结束符 + 发送。发送的是**字节**（文本会按所选结束符补齐），
+   HEX 模式原样发送、不追加任何东西。
+
+   W6 起它长在**解码窗口的最底下**（输入与输出同屏）：整个 dock 是一个可拉伸的列，
+   上面那根 `--cmd-resize` 是拖动条；输入框是 textarea（可以多行、可以上下拉伸）。 */
+.cmd-dock {
+  flex: 0 0 auto;
+  position: relative;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/* 收成一个 ▲：dock 只剩这一颗按钮的高度（点击展开回记住的高度）。 */
+.cmd-dock[data-collapsed="1"] .cmd-line,
+.cmd-dock[data-collapsed="1"] .cmd-resize { display: none; }
+
+.cmd-open {
+  width: 100%;
+  height: 22px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel-2);
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cmd-open:hover { background: #22303f; }
+
+/* 拖动条：上下拖改高度；拖到最上就收起来（和分栏那条一个手感）。 */
+.cmd-resize {
+  height: 6px;
+  cursor: row-resize;
+  background: linear-gradient(var(--line), var(--line)) center/100% 1px no-repeat;
+}
+
+.cmd-resize:hover,
+.cmd-resize:focus-visible { background: linear-gradient(var(--accent), var(--accent)) center/100% 2px no-repeat; }
+
+.cmd-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: flex-start;
+  padding: 4px 10px 8px;
+}
+
+/* ⚠️ 命令 dock 的高度要**从它自己这一窗的正文里省**，而不是把整个网格行撑高：
+   撑高这一行的话，同行那个窗口（2×2 时是「结构化事件」）会被拉长一截、
+   底下留一块空白 —— 看起来像日志丢了。所以 min/max 两边都要减（只减 max 没用：
+   CSS 里 min-height 优先，50 行那个下限会把上限顶破），并且留一个绝对下限 120 px，
+   免得把输入行拉到很高时正文被压成一条缝。 */
+#pane-decoded .log-lines {
+  min-height: max(120px, calc(var(--pane-body-min) - var(--pane-foot-h, 0px)));
+  max-height: calc(var(--pane-body-max) - var(--pane-foot-h, 0px));
+}
+
+.cmd-input {
+  flex: 1 1 260px;
+  min-width: 0;
+  /* 高度跟着 dock 走（JS 写 --cmd-input-h），所以拉伸会有用；自己不让拖。 */
+  height: var(--cmd-input-h, 30px);
+  min-height: 26px;
+  resize: none;
+  overflow-y: auto;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.cmd-input:focus { outline: none; border-color: var(--accent); }
+.cmd-input:disabled { opacity: .5; }
+
+.cmd-hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.cmd-hint[data-kind="fail"] { color: var(--fail); }
+.cmd-hint[data-kind="ok"] { color: var(--pass); }
+
+/* ------------------------------------------------- 窗口内直接敲键（W6）
+   点窗口正文的空白处 ⇒ 这个窗口拿到键盘，按键直接变成字节发给设备；
+   `Esc` 或点到别处就放开（放开之后页面快捷键原样恢复）。
+
+   焦点必须**看得出来**（否则“为什么我打字跑到设备去了”会很难查）：
+   捕获中的正文给一圈强调边框 + 窗口头上一小条状态。它说的是“**此刻**键盘在往设备发”，
+   不是“这个窗口支持/不支持终端”（平台不识别固件能力，也就不作任何支持性承诺）。 */
+.log-lines[data-capture="1"] {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.pane-capture {
+  display: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--pass);
+  color: var(--pass);
+  cursor: pointer;
+  background: transparent;
+}
+
+.log-pane[data-capture="1"] .pane-capture { display: inline-block; }
+
+/* 拖动命令输入行的上沿时：整个页面都换成上下拖动的手型，别让鼠标划过别处又变回箭头。 */
+body.dock-resizing { cursor: row-resize; user-select: none; }
+body.dock-resizing * { cursor: row-resize !important; }
+
+/* “页面是旧的”那条提示（）：工作台顶上一条，**不遮日志、不自动刷新**。
+   它说的是事实（旧 pid / 旧静态资源戳）而不是一个泛泛的“请刷新”。 */
+.stale-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+  margin: 6px 10px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  background: #3a2d12;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.stale-note .stale-why { font-family: var(--mono); color: var(--warn); }
+.stale-note .stale-detail { color: var(--muted); font-family: var(--mono); }
+
+.stale-note button { font-size: 12px; }
+
+/* 状态颜色：连接中/重连中/断开中是过渡态（黄），失败类状态是红，已连接是绿。 */
+#observeState[data-state="connected"] { color: var(--pass); }
+#observeState[data-state="connecting"],
+#observeState[data-state="reconnecting"],
+#observeState[data-state="disconnecting"] { color: var(--warn); }
+#observeState[data-state="port_missing"],
+#observeState[data-state="owned_elsewhere"],
+#observeState[data-state="open_failed"] { color: var(--fail); }
+
+/* ------------------------------------------------------------------ panels */
+.panel {
+  margin: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.panel h2 {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+
+.panel h2 .hint { font-size: 11px; color: var(--muted); font-family: var(--mono); font-weight: 400; }
+
+.runbar-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.run-id { font-family: var(--mono); font-size: 12px; }
+.run-sub { font-size: 11px; color: var(--muted); }
+/* 自动验证那一屏的**主状态行**（“结果 PASS · 断言 … · 耗时 …”）：结果本身按语义上色 ——
+   成功就是**那个绿**（与阶段卡、断言卡同一个 `--ok`），失败红、取消/未完成用 warn。
+   ⚠️ 只上色，一个字都没改（`#runSub` 的正文与悬停事实保持原样）。 */
+.run-sub[data-result="PASS"] { color: var(--ok); }
+.run-sub[data-result="FAIL"], .run-sub[data-result="ERROR"] { color: var(--fail); }
+.run-sub[data-result="CANCELLED"], .run-sub[data-result="INCOMPLETE"] { color: var(--warn); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* ：“还差哪一步”必须写在按钮**旁边**（页面上那个位置）。
+ * 以前它只写在按钮的 tooltip 里（要悬停才看得到），而那行拒绝写在四个窗口下面的
+ * `#runMessage`（按钮上面一屏之外）—— 用户点“启动自动验证”看到的就是“没反应”。 */
+#startHint { font-size: 12px; color: var(--muted); }
+#startHint[data-kind="warn"] { color: var(--warn); }
+/* 被拒绝时把“要动的那一个控件”括起来提请用户看：一次性的，不看就自己消失。 */
+.attn { outline: 2px solid var(--warn); outline-offset: 3px; border-radius: 7px; }
+
+.field { font-size: 12px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.field input[type="number"] {
+  width: 52px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font-family: var(--mono);
+}
+.field.check input { accent-color: var(--accent); }
+
+button {
+  padding: 5px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: #3d4a5c; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #08121f; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #63adfb; }
+
+:root[data-theme="warm"] .topbar,
+:root[data-theme="warm"] .panel,
+:root[data-theme="warm"] .ws-head,
+:root[data-theme="warm"] .pane-head,
+:root[data-theme="warm"] .metric-pane,
+:root[data-theme="warm"] .autotest-picker table,
+:root[data-theme="warm"] .split-pop,
+:root[data-theme="warm"] .ident-detail,
+:root[data-theme="warm"] .pane-menu,
+:root[data-theme="warm"] .stale-note,
+:root[data-theme="warm"] .message,
+:root[data-theme="warm"] .run-progress,
+:root[data-theme="warm"] .assert,
+:root[data-theme="warm"] .pane-notice,
+:root[data-theme="warm"] .pane-why,
+:root[data-theme="warm"] .metric-pane,
+:root[data-theme="warm"] .metric-pane-head,
+:root[data-theme="warm"] .ws-fs-results,
+:root[data-theme="warm"] .runbar-head,
+:root[data-theme="warm"] .import-progress,
+:root[data-theme="warm"] .tool-ico,
+:root[data-theme="warm"] .doctor-link,
+:root[data-theme="warm"] .dh-tools button,
+:root[data-theme="warm"] .dh-tools a,
+:root[data-theme="warm"] .dh-filter,
+:root[data-theme="warm"] .dh-check,
+:root[data-theme="warm"] .dh-flash,
+:root[data-theme="warm"] .dh-head {
+  box-shadow: 0 8px 18px var(--panel-shadow);
+}
+
+:root[data-theme="warm"] .mode-btn[aria-pressed="true"] { background: var(--panel-2); }
+:root[data-theme="warm"] .theme-btn[aria-pressed="true"] { background: var(--panel-2); }
+:root[data-theme="warm"] button.primary { color: #fffdf9; }
+:root[data-theme="warm"] button.primary:hover:not(:disabled) { background: #91400a; }
+:root[data-theme="warm"] .mode-btn { border-color: var(--line); }
+:root[data-theme="warm"] .brand .logo { background: linear-gradient(140deg, #d9772a, #f4b05d); }
+:root[data-theme="warm"] .doctor-link { background: var(--field-bg); }
+:root[data-theme="warm"] button:not(.primary):not(.danger) { background: var(--field-bg); }
+:root[data-theme="warm"] .tool-ico,
+:root[data-theme="warm"] .fold-ico,
+:root[data-theme="warm"] .ident-more,
+:root[data-theme="warm"] .pane-link,
+:root[data-theme="warm"] .pane-mini,
+:root[data-theme="warm"] .stage-locate {
+  background: var(--field-bg); color: var(--text); }
+:root[data-theme="warm"] .pane-head,
+:root[data-theme="warm"] .ws-head,
+:root[data-theme="warm"] .metric-pane-head,
+:root[data-theme="warm"] .runbar-head,
+:root[data-theme="warm"] .panel,
+:root[data-theme="warm"] .ident-detail,
+:root[data-theme="warm"] .split-pop,
+:root[data-theme="warm"] .pane-menu,
+:root[data-theme="warm"] .ws-fs-results,
+:root[data-theme="warm"] .stale-note {
+  background: var(--panel);
+}
+:root[data-theme="warm"] .pane-head { border-color: var(--line); }
+:root[data-theme="warm"] .log-pane { background: #12171f; }
+:root[data-theme="warm"] .log-pane[data-active="1"] { box-shadow: 0 0 0 2px rgba(217, 119, 42, .18), 0 12px 24px rgba(122, 89, 60, .18); }
+:root[data-theme="warm"] .log-pane[data-active="1"] .pane-head { background: #fdf1de; }
+:root[data-theme="warm"] .log-pane[data-active="1"] .pane-title { color: var(--text); }
+/* ⚠️ 暖色主题下**日志窗口仍是深色工作区**（既定设计，见下面的 `.log-pane` 背景）⇒
+   这一格里的“成功 / 定位”按**深底**取值：浅底那一套（深绿 / 淡绿）在黑底上根本看不见，
+   而且日志窗口在两种主题下必须是**同一套颜色语义**（用户口径 2026-10-13）。 */
+:root[data-theme="warm"] .log-pane {
+  --ok: #46c07a;
+  --pass: var(--ok);
+  --ok-border: #2f8a58;
+  --loc: #46c07a;
+  --loc-bg: rgba(70, 192, 122, .14);
+  --loc-bg-strong: rgba(70, 192, 122, .24);
+}
+:root[data-theme="warm"] .log-pane .stage {
+  --text: #dde4ee;
+  --muted: #8d9aab;
+  --accent: #4c9ef8;
+  --fail: #f0605f;
+  --warn: #e2b341;
+}
+:root[data-theme="warm"] .log-pane .stage-empty { color: #8d9aab; }
+:root[data-theme="warm"] .log-pane .stage .stage-locate { color: var(--control-text); }
+:root[data-theme="warm"] .find-input,
+:root[data-theme="warm"] .cmd-input,
+:root[data-theme="warm"] .metric-pick,
+:root[data-theme="warm"] .metric-window,
+:root[data-theme="warm"] .metric-scale,
+:root[data-theme="warm"] .field input[type="number"],
+:root[data-theme="warm"] select,
+:root[data-theme="warm"] input[type="file"] {
+  background: var(--field-bg);
+  border-color: var(--field-border);
+  color: var(--text);
+}
+:root[data-theme="warm"] .cmd-open { background: var(--panel-2); }
+/* “取消导入”看着要像**停下**，不是删除（它不删任何既有会话）。 */
+button.danger { border-color: #7d3a3a; color: #ffb4b4; }
+button.danger:hover:not(:disabled) { border-color: #a34b4b; color: #ffd0d0; }
+
+/* ------------------------------------------------------------------- steps */
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+}
+
+.steps li {
+  flex: 1 1 120px;
+  min-width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+
+.steps li[data-status="pending"] { border-left-color: #3d4a5c; color: var(--muted); }
+.steps li[data-status="running"] { border-left-color: var(--accent); }
+.steps li[data-status="pass"] { border-left-color: var(--pass); }
+.steps li[data-status="fail"] { border-left-color: var(--fail); }
+
+.steps .step-name { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+.steps .step-value { font-size: 12px; }
+.steps .step-detail { font-size: 11px; color: var(--muted); word-break: break-word; }
+
+/* --------------------------------------------------------- 阶段卡片（T3） */
+/* 被测阶段（用例或受控序列的每一步）。
+   ⚠️ 用户口径（2026-10-10）：这排卡片不再夹在工作台栏与四窗之间，而是**工作台里的第 5 格**
+   —— 与“工具输出”并排的一个窗口（`#pane-stage`）。所以这里只管窗口**里面**：
+   单列（窗口只有两三百像素宽，两列根本读不了）、卡片自己纵向滚（`.log-lines` 已经在滚）。 */
+/* ⚠️ 选择器必须带上 `.log-lines`（两条规则的优先级一样、而 `.log-lines` 在后面）：
+   只写 `.stage-lines` 会被后面的 `.log-lines` 盖掉字体/行高/空白处理，卡片又变回等宽日志。 */
+.log-lines.stage-lines {
+  /* 高度/滚动/边距全部沿用 `.log-lines`（同一个高度预算，不能两套算法）；
+     但**不**沿用行流的排版：卡片是面板文字（比例字体、可折行），不是等宽日志行。 */
+  font-family: inherit;
+  font-size: 12px;
+  white-space: normal;
+  line-height: 1.45;
+  padding: 4px 4px 6px;
+}
+.stage-list {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px;
+}
+/* 一条阶段事件都没有时**不摆空卡片**：只给一行如实说明 ——
+   “一片空白”看起来像“测试没跑”，而这两件事完全不同（T6 的同一个口径）。 */
+.stage-empty { padding: 4px 6px; font-size: 12px; color: var(--muted); }
+/* 命中跳转：当前那一个命中加一圈描边（选择态不只靠颜色）。
+   ⚠️ 颜色按**定位**语义给（`--loc`）：深色与暖色主题用**同一个绿**（用户口径 2026-10-13）——
+   这一格以前写死 `#6cb6ff`，暖色主题下它就是一道蓝。 */
+.stage[data-hit="1"] > details { outline: 2px solid var(--loc); outline-offset: -2px; }
+/* 定位按钮：在“结果与耗时”之前（需求 §8.1）。没坐标时禁用 —— 不禁用就是一个点不动的按钮。 */
+.stage-locate {
+  flex: 0 0 auto; font: inherit; font-size: 11px; padding: 1px 6px; cursor: pointer;
+  background: #223041; color: inherit; border: 1px solid #3d4a5c; border-radius: 3px;
+}
+.stage-locate:disabled { opacity: .5; cursor: default; }
+.stage-locate:hover:not(:disabled) { background: #2b3d52; }
+/* ⚠️ 选择态不只用颜色表达：左边框变粗 + 标签前写上“定位中”。
+   “定位中”用的是定位色（`--loc`）：与“通过/断言”同一个绿族，但两个主题都是绿（用户口径 2026-10-13）。 */
+.stage[data-located="1"] > details { border-left-width: 6px; border-left-color: var(--loc); }
+.stage[data-located="1"] .stage-label::before { content: "定位中 · "; color: var(--loc); }
+.stage > details { border-left: 3px solid #3d4a5c; background: #1b2330; border-radius: 3px; }
+.stage > details > summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 5px 8px; font-size: 12px; list-style: none;
+}
+.stage > details > summary::-webkit-details-marker { display: none; }
+.stage-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stage-meta { flex: 0 0 auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stage-bullet { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #3d4a5c; }
+.stage-body { padding: 0 8px 7px 24px; font-size: 11px; color: var(--muted); display: grid; gap: 2px; }
+.stage-id { font-family: var(--mono); font-size: 11px; }
+.stage-kv { word-break: break-word; }
+
+.stage[data-status="pending"] > details { border-left-color: #3d4a5c; color: var(--muted); }
+.stage[data-status="running"] > details { border-left-color: var(--accent); }
+.stage[data-status="PASS"] > details { border-left-color: var(--pass); }
+.stage[data-status="FAIL"] > details { border-left-color: var(--fail); }
+.stage[data-status="ERROR"] > details { border-left-color: var(--fail); }
+.stage[data-status="SKIPPED"] > details { border-left-color: #6b7280; opacity: .8; }
+.stage[data-status="CANCELLED"] > details { border-left-color: #6b7280; }
+.stage[data-status="PASS"] .stage-bullet { background: var(--pass); }
+.stage[data-status="FAIL"] .stage-bullet { background: var(--fail); }
+.stage[data-status="ERROR"] .stage-bullet { background: var(--fail); }
+.stage[data-status="SKIPPED"] .stage-bullet { background: #6b7280; }
+.stage[data-status="CANCELLED"] .stage-bullet { background: #6b7280; }
+
+/* 加载动画：只有“进行中”那一步在动。⚠️ 动画只表达“还在跑”，
+   状态与耗时**都不由动画决定**（动画卡住不代表任务卡住，反之亦然）。 */
+.stage[data-status="running"] .stage-bullet { background: var(--accent); animation: stage-pulse 1.2s ease-in-out infinite; }
+@keyframes stage-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .35; transform: scale(.7); }
+}
+
+/* 用户要求少动画时：**关掉动画**，但仍然看得出“正在进行”
+   （靠颜色与文字，不靠动）—— 而不是把状态也一起藏掉。 */
+@media (prefers-reduced-motion: reduce) {
+  .stage[data-status="running"] .stage-bullet { animation: none; }
+  .stage[data-status="running"] > details { border-left-width: 5px; }
+}
+
+/* ------------------------------------------------- 断言的两个结论（分域） */
+/* 一次 run 的结论里混着“证据/日志健不健康”与“业务对不对”时，分开念。
+   ⚠️ 这只改怎么念：红的那条照样逐条写在结论行上、也照样在下面的卡片里。 */
+.assert-domains { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.assert-domain {
+  padding: 5px 8px; border-radius: 3px; font-size: 12px;
+  border-left: 3px solid #3d4a5c; background: #1b2330;
+}
+.assert-domain[data-status="pass"] { border-left-color: var(--pass); }
+.assert-domain[data-status="fail"] { border-left-color: var(--fail); color: #ffd9d9; }
+
+/* ------------------------------------------------ 采集进度与最近证据（） */
+/* 长窗口（上限 240 s）必须有这一行：三行分别回答“跑了多久 / 现在在哪一步 /
+   设备最后一次说话是什么时候”。⚠️ 它只转述服务端的记账，不自己推算“应该快了”。 */
+.run-progress {
+  margin: 8px 0 0; padding: 6px 8px; border-radius: 3px;
+  background: #1b2330; border-left: 3px solid var(--accent);
+  font-size: 12px; color: var(--muted); white-space: pre-line;
+  font-variant-numeric: tabular-nums;
+}
+
+.message {
+  margin: 0 10px 8px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  font-size: 12px;
+  background: #202834;
+  border: 1px solid var(--line);
+}
+.message[data-kind="fail"] { border-color: var(--fail-border); background: #2a1b1c; }
+.message[data-kind="pass"] { border-color: var(--ok-border); background: #16281f; }
+.message[data-kind="warn"] { border-color: var(--warn-border); background: #2a2415; color: #f0d68a; }
+
+/* -------------------------------------------------------------- stream grid */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 0;
+}
+
+.grid .pane { display: flex; flex-direction: column; min-height: 200px; }
+
+/* ------------------------------------------------------- 统一日志工作台 */
+/* 四个来源同时在同一个工作区里可见，各自一个窗口：宽屏平铺一行，中等 2×2，
+   窄屏纵向排列。每个窗口高度固定、各自纵向滚动，窗口头吸顶。 */
+.workspace { display: flex; flex-direction: column; }
+
+.ws-head {
+  display: flex;
+  /* ⚠️ 这一栏**不许因为工具栏变宽而换行**：换行会让 --ws-head-h 从 31 变 53 px，
+     四份日志跟着整体下移（点一下分栏、页面跳一下）。现在让说明文字先缩、工具栏不动。 */
+  flex-wrap: nowrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  /* 工作台那一栏吸顶：点了“阅读位”把日志区贴到浏览器底部之后，
+     控制（分栏/阅读位/收起筛选行/字号）仍然留在视口顶端。
+     窗口头要排到它下面，所以它的高度会写进 --ws-head-h（JS 量的）。 */
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--panel);
+  border-radius: 11px 11px 0 0;
+}
+.ws-title { font-size: 12px; font-weight: 600; color: var(--text); flex: 0 0 auto; }
+.ws-tools { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; margin-left: auto; flex: 0 0 auto; }
+.ws-stat { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+/* 实时降载的记账（L5）：正常时低调，"慢批"亮一下，一旦**丢过**东西就变警告色。 */
+.ws-shed[data-state="busy"] { color: var(--accent); }
+.ws-shed[data-state="warn"] { color: var(--warn); }
+.ws-tools select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 11px;
+}
+
+/* 窗口同时可见：宽屏**一行**，中等宽度 2×2+1，窄屏单列。
+   断点按“窗口还看得清日志”来定，而不是页面自己觉得好看：
+   一行需要每个至少 ~200 px，所以 1044 px（5×200 + 4×8）以上就平铺一行。
+
+   一行布局用 flex：每个窗口的宽度 = JS 写在 `flex-grow` 上的**权重**（拖分隔条改它），
+   折叠成标签的窗口固定 --rail-w 宽并排到右端（`order`）。
+   ≤1044 px 时回到 grid 2×2 / 单列，并把折叠、拖宽一律忽略（窄屏下的标签竖不起来，没有意义）。 */
+/* 全文件搜索（ / L4）：工作区里的一行控件 + 一张结果表。
+   它与每一窗自己的搜索框是两件事：那一栏只搜**已经加载**的内容，这一栏搜整个文件。
+   所以这一行必须自己说清"搜的是整个文件、由服务端分块扫"，不能让人以为等价。 */
+.ws-fullsearch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 0;
+}
+.ws-fs-title { font-size: 11px; color: var(--muted); letter-spacing: .06em; }
+.ws-fs-status { flex: 1 1 240px; min-width: 160px; }
+.ws-fs-status[data-state="running"] { color: var(--accent); }
+.ws-fs-status[data-state="warn"] { color: var(--warn); }
+.ws-fs-status[data-state="fail"] { color: var(--fail); }
+.ws-fs-results {
+  flex: 1 1 100%;
+  /* PW-UX-001 第 1 条：**最多五行**，更多的在里面自己滚（滚动行为与日志窗口一致，
+     见 `edgeWheelTarget()`：到顶/到底不再把页面带跑）。行高实测 24px。 */
+  max-height: calc(5 * var(--fs-hit-h) + 2px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+}
+.ws-fs-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 3px 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-fs-hit:hover { background: rgba(127, 127, 127, .14); }
+.ws-fs-hit:last-child { border-bottom: 0; }
+/* 点过的那一条（）：不标出来的话，“我点的是哪一条”只能靠记。 */
+.ws-fs-hit[data-current="1"] {
+  background: rgba(127, 127, 127, .18);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* 历史运行那一窗（PW-UX-001 第 3 条）：**最多十行**，再多在里面自己滚。
+   之前 40 条 run 会把页面撑到 2000+ px（占整页一半），越用越长。
+   表头在窗内吸顶，滚动时仍然知道哪一列是什么。 */
+.runs-scroll {
+  max-height: calc(10 * var(--run-row-h) + var(--runs-head-h));
+  overflow: auto;
+}
+.runs-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.log-grid {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0 8px 8px;
+  /* 高度预算 = 窗口头 + 至少 50 行日志 + 收起筛选行省下的部分。
+     有它才能把“省下的高度”分给日志区，而不是变成窗口底部的空白。
+     ⚠️ 这里要把容器自身的上下内边距也折算进预算：`padding` 是视口里可见高度的一部分，
+        不把它扣掉时，打开全文件搜索结果列表时网格会被撑出几像素，底边刚好越过浏览器底部。
+     ⚠️ 但不能超过“吸顶控件之下看得见的高度”（min 里第二项）：视口不够高时窗口矮一点，
+     而不是让吸顶的窗口头把正文盖住（盖住的部分永远滚不出来）。 */
+  min-height: min(
+    calc(var(--pane-head-h) + var(--log-lines) * var(--log-line-h) + var(--pane-fold-gain) + 2px),
+    calc(var(--pane-head-h) + var(--pane-body-max) + 2px)
+  );
+}
+.log-grid .log-pane { flex: 1 1 0; min-width: 0; }
+@media (max-width: 1044px) {
+  .log-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .log-grid .split-bar { display: none; }
+}
+@media (max-width: 640px) {
+  .log-grid { grid-template-columns: minmax(0, 1fr); }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .ws-tools { flex: 1 1 100%; flex-wrap: wrap; margin-left: 0; min-width: 0; }
+}
+
+/* 折叠成一个标签：只留竖排的窗口名（例如竖着的“工具输出”）。
+   宽度 = --rail-w；鼠标移上去变亮，单击展开，双击把四个窗口恢复成等宽。 */
+.log-pane[data-collapsed="1"] {
+  flex: 0 0 var(--rail-w);
+  min-width: var(--rail-w);
+  cursor: pointer;
+}
+.log-pane[data-collapsed="1"] .pane-find,
+.log-pane[data-collapsed="1"] .log-lines,
+.log-pane[data-collapsed="1"] .cmd-dock,
+.log-pane[data-collapsed="1"] .pane-why,
+.log-pane[data-collapsed="1"] .pane-notice,
+.log-pane[data-collapsed="1"] .pending-pill { display: none !important; }
+.log-pane[data-collapsed="1"] .pane-head { height: 100%; }
+.log-pane[data-collapsed="1"] .pane-row { flex-direction: column; align-items: center; gap: 6px; padding: 6px 1px; }
+.log-pane[data-collapsed="1"] .pane-row > *:not(.pane-title) { display: none; }
+.log-pane[data-collapsed="1"] .pane-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 1px;
+}
+.log-pane[data-collapsed="1"]:hover .pane-head,
+.log-pane[data-collapsed="1"]:focus-visible .pane-head { background: var(--pane-active-head); }
+
+/* 单窗全屏（Slice C）：只留一个窗口，把它放大到整个工作区。
+   它是**临时阅读形态**，所以刷新后仍然回到四窗（状态不落盘）；退出入口是这一窗的按钮和 Esc。 */
+#logGrid[data-mode="focus"] .log-pane { display: none; }
+#logGrid[data-mode="focus"] .log-pane[data-shown="1"] { display: flex; flex: 1 1 auto; }
+/* 全屏里窗口变宽，一行放得下：让工具条与搜索行各占一行，别浪费高度。 */
+#logGrid[data-mode="focus"] .log-pane[data-shown="1"] .pane-tools { margin-left: auto; }
+
+/* 分栏（Slice C）：只展开选中的那几栏，其余收成右端的标签。
+   ≤1044 px 时两栏/三栏照旧上下堆叠（收起的不显示，标签竖不起来）。 */
+#logGrid[data-mode="split"] .log-pane[data-shown="0"] { display: none; }
+@media (max-width: 1044px) {
+  #logGrid[data-mode="split"] .log-pane[data-shown="1"] { display: flex; }
+}
+.split-bar {
+  align-self: stretch;
+  border-radius: 5px;
+  background: var(--line);
+  cursor: col-resize;
+  touch-action: none;   /* 拖拽时不要被浏览器的手势抢走 */
+  flex: 0 0 var(--bar-w);
+}
+.split-bar:hover, .split-bar:focus { background: var(--accent-line); outline: none; }
+
+/* 分栏菜单：鼠标移到按钮上（或键盘聚焦）就展开；里面选栏数与每栏来源。
+   ⚠️ 不能常驻在工作台那一栏：控件一出现/消失会让那一栏换行，四份日志整体挪。 */
+.split-menu { position: relative; display: inline-flex; }
+.split-count { color: var(--muted-fg); }
+.split-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  min-width: 232px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);  gap: 6px;
+}
+/* 按钮与菜单之间那 6 px 的缝也算菜单的一部分：鼠标从按钮滑进菜单不会“离开”。 */
+.split-pop::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
+/* 菜单里的每一项：鼠标移上去要看得出来（不然不知道能不能点）。 */
+.split-pop .split-col:hover, .split-pop .split-col:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--panel-2);}
+.split-pop-title { margin: 0; font-size: 12px; }
+.split-cols { display: flex; flex-wrap: wrap; gap: 4px; }
+.split-col { min-width: 46px; }
+.split-col.on { border-color: var(--accent); background: var(--panel-2); }
+.split-pop-hint { margin: 0; color: var(--muted-fg); font-size: 11px; }
+
+/* 悬浮的“回到页面顶部”：滚过一屏之后才出现，任何时候都能一键回到页头
+   （运行按钮、板卡状态都在那里）。 */
+.float-top {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 6;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: #1b2a3a;
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+.float-top:hover { border-color: var(--accent); }
+/* 窄屏：工具栏放不下了 → 允许换行（宁可让这一栏高一点，也不能把页面撑出横向滚动条）。
+   ⚠️ 宽度变化时 `--ws-head-h` 会跟着量，窗口头始终排在这一栏下面，不会重叠。 */
+@media (max-width: 780px) {
+  .ws-head { flex-wrap: wrap; }
+}
+
+/* 窄屏退化：分栏改成上下堆叠，分隔条不再可拖。 */
+@media (max-width: 640px) {
+  #logGrid[data-mode="split"],
+  #logGrid[data-mode="split"][data-split-n="1"],
+  #logGrid[data-mode="split"][data-split-n="3"],
+  #logGrid[data-mode="split"][data-split-n="4"] { grid-template-columns: minmax(0, 1fr); }
+  #logGrid[data-mode="split"] .log-pane[data-slot="a"],
+  #logGrid[data-mode="split"] .log-pane[data-slot="b"],
+  #logGrid[data-mode="split"] .log-pane[data-slot="c"],
+  #logGrid[data-mode="split"] .log-pane[data-slot="d"] { grid-column: 1; }
+  #logGrid[data-mode="split"] .log-pane[data-slot="b"] { grid-row: 2; }
+  #logGrid[data-mode="split"] .log-pane[data-slot="c"] { grid-row: 3; }
+  #logGrid[data-mode="split"] .log-pane[data-slot="d"] { grid-row: 4; }
+  #logGrid[data-mode="split"] .split-bar { display: none; }
+  .split-pop { left: auto; right: 0; }
+}
+
+.log-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #12171f;
+}
+/* 冻结状态要能一眼看出来是哪一个窗口停了。 */
+.log-pane[data-paused="1"] { border-color: #6b5723; }
+
+/* 作者样式里的 display 会盖掉浏览器自带的 [hidden] { display: none }：
+   “选项”面板因为写了 display: flex，所以 hidden 一直没生效 —— 四个选项面板
+   始终挂在窗口上盖着日志（）。该藏的东西必须显式藏起来。 */
+[hidden] { display: none !important; }
+
+/* “当前窗口”要一眼看出来（更亮 + 标题加粗 + 描边）。
+   下面这些全是 CSS 变量：浏览器控制台里 PWLogWorkspace.tune.set({...}) 可以实时调，
+   调好之后告诉我数值，我把它们固化成默认值。
+   注意：加粗用 outline（不占布局）而不是 border-width，否则改一下边框四个窗口就整体挪一下。 */
+:root {
+  --pane-active-brightness: 1.12;
+  --pane-active-outline-w: 2px;
+  --pane-active-border: #3d6fa8;
+  --pane-active-head: #1b2735;
+  --pane-active-title: #f2f7ff;
+  --pane-active-title-weight: 700;
+  --pane-active-glow: 0 0 18px -6px rgba(61, 111, 168, .85);
+  --pane-dim: 0.9;
+}
+.log-pane[data-active="1"] {
+  border-color: var(--pane-active-border);
+  outline: var(--pane-active-outline-w) solid var(--pane-active-border);
+  outline-offset: calc(-1 * var(--pane-active-outline-w));
+  box-shadow: var(--pane-active-glow);
+}
+.log-pane[data-active="1"] .pane-head { background: var(--pane-active-head); }
+.log-pane[data-active="1"] .pane-title {
+  color: var(--pane-active-title);
+  font-weight: var(--pane-active-title-weight);
+}
+.log-pane[data-active="1"] .log-lines { filter: brightness(var(--pane-active-brightness)); }
+.log-pane:not([data-active="1"]) .log-lines { opacity: var(--pane-dim); }
+
+/* 窗口头吸顶：页面向下滚时，正在看的那个窗口的工具条（暂停/跳尾/下载/搜索）
+   始终留在视口顶端，不会跟着滚出去。背景必须不透明，否则文字会从下面透上来。 */
+.pane-head {
+  position: sticky;
+  top: var(--ws-head-h, 0px);
+  z-index: 2;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+  border-radius: 9px 9px 0 0;
+}
+.pane-row { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 3px 8px; }
+.pane-title { font-size: 12px; font-weight: 600; }
+.pane-file { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+/* 工具栏**不换行**：统计行一长就会多折一行，而四个窗口是等高拉伸的，
+   于是四份日志会一起挪一下。现在改成“工具栏永远一行，统计行超出就用省略号”，
+   窗口头高度就只跟“筛选行有没有收起”有关（完整统计文字在 title 里）。 */
+.pane-tools {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+  overflow: hidden;
+}
+/* 按钮不参与压缩：一挤它们就会把“暂停”折成两行，窗口头反而更高。 */
+.pane-tools > :not(.pane-stat) { flex: 0 0 auto; white-space: nowrap; }
+
+/* 第二行：搜索与阅读入口。作用域只限本窗口。 */
+.pane-find { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 0 8px 4px; }
+.find-input {
+  flex: 1 1 80px;
+  min-width: 66px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #12171f;
+  color: var(--text);
+}
+.find-input[data-error="1"] { border-color: var(--fail); }
+.tool-ico {
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.tool-ico[aria-pressed="true"],
+.tool-ico[aria-expanded="true"] { color: var(--text); border-color: var(--accent-line); background: #1b2a3a; }
+/* 悬停反馈：所有按钮（含分栏菜单里的栏数）鼠标移上去就变亮 —— 不然看不出能不能点。 */
+.tool-ico:hover, .tool-ico:focus-visible { color: var(--text); border-color: var(--accent-line); background: #1b2a3a; }
+.find-hits { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 5ch; text-align: right; }
+.find-hits[data-state="error"] { color: var(--fail); }
+.find-hits[data-state="none"] { color: var(--warn); }
+
+/* 文本排除（切片 6）：按钮上的徽标 = **已隐藏多少行**。
+   三态都要看得出区别：生效（亮）／已停用（暗）/ 条件无效（红）。 */
+.excl-ico { white-space: nowrap; }
+.excl-count { font-family: var(--mono); color: var(--muted-fg); }
+.excl-ico[aria-pressed="true"] .excl-count { color: var(--text); }
+.excl-ico[data-state="off"] { border-style: dashed; }
+.excl-ico[data-state="off"] .excl-count { color: var(--warn); }
+.excl-ico[data-state="error"] { border-color: var(--fail); }
+.excl-ico[data-state="error"] .excl-count { color: var(--fail); }
+.pane-menu .excl-input { flex: 1 1 96px; min-width: 80px; }
+.pane-menu .menu-hint { flex: 1 1 100%; color: var(--muted); }
+.pane-menu .menu-hint[data-kind="on"] { color: var(--accent); }
+.pane-menu .menu-hint[data-kind="fail"] { color: var(--fail); }
+
+/* 诊断包入口（工作台那一栏，与按钮同一种外观）：没有会话时是**禁用**的样子，
+   而不是一个点不动的链接（点不动但看着能点是最让人困惑的那种状态）。 */
+/* 离线诊断那一栏的「导出诊断包 · <会话号>」（ 收口：这个入口只属于离线诊断，
+   工作台工具栏上那份全局按钮已删）。
+   ⚠️ `[hidden]` 必须显式压住 `display: inline-block`：作者样式优先于浏览器的 `[hidden]`，
+   不写这一条的话“没有选中会话就藏起来”会失效（链接会显示成一个死人链接）。 */
+.bundle-link { text-decoration: none; display: inline-block; }
+.bundle-link[hidden] { display: none; }
+.bundle-link[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+.offline-count { color: var(--muted); font-size: 11px; }
+.run-id[data-state="loaded"] { color: var(--accent); }
+
+/* 导入诊断包（切片 8）：与命令行同一行节的密度；提示不占常驻宽度。 */
+.import-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 12px 8px; }
+.import-line input[type="file"] {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 320px;
+}
+.import-hint { color: var(--muted); font-size: 11px; flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+
+/* 导入进度行（P4）：进度条 + 一句阶段话 + 取消。
+   ⚠️ 进度条**撑满可用宽**：窄屏下它是唯一能看出"还在动"的东西。
+   总量未知时不给 `value`，浏览器自己画一段来回走动的动画 —— 不画假的 0%。 */
+.import-progress { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 12px 8px; }
+.import-progress progress {
+  flex: 1 1 200px;
+  min-width: 120px;
+  height: 8px;
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.import-progress progress::-webkit-progress-bar { background: var(--panel-2); border-radius: 6px; }
+.import-progress progress::-webkit-progress-value { background: var(--accent); border-radius: 6px; }
+.import-progress progress::-moz-progress-bar { background: var(--accent); border-radius: 6px; }
+.import-step { color: var(--muted); font-size: 11px; flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+
+/* 收起/展开搜索与筛选行的小箭头（放在文件名旁边，不占工具栏的宽度）。
+   默认就带边框：不带边框时它看起来像装饰，用户找不到“怎么收起筛选行”。 */
+.fold-ico {
+  padding: 0 5px;
+  font-size: 12px;
+  line-height: 1.35;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.fold-ico:hover { color: var(--text); border-color: var(--accent-line); }
+.fold-ico[aria-expanded="false"] { color: var(--accent); border-color: var(--accent-line); }
+
+/* 阅读选项面板：低频开关不占常驻位置，但每项都有名字与选中态。 */
+.pane-menu {
+  position: absolute;
+  top: 100%;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 190px;
+  max-width: 250px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+  font-size: 11px;
+}
+.pane-menu .menu-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.pane-menu .menu-label { color: var(--muted); min-width: 32px; }
+.pane-menu select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 11px;
+  max-width: 100%;
+}
+.pane-tools button { padding: 2px 8px; font-size: 11px; }
+.pane-tools button[aria-pressed="true"] { border-color: #6b5723; background: #2a2415; color: #f0d68a; }
+.pane-link {
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 2px 8px;
+}
+.pane-link:hover { border-color: var(--accent-line); }
+.pane-link:not([href]) { color: var(--muted); opacity: .5; pointer-events: none; }
+
+/* ----  / L3：区间窗口的两个视觉约定 ----
+   ⚠️【向前加载】不共用 .pane-link：上面那条 `:not([href])` 是给"没有下载目标"的
+   链接用的，会给**没有 href 的元素**加上 `pointer-events: none` ——
+   而这是个真正要点的按钮（第一版就是这么写的，结果按钮点不动）。 */
+.pane-mini { color: var(--accent); border: 1px solid var(--line); border-radius: 7px; }
+.pane-mini:hover:not(:disabled) { border-color: var(--accent-line); }
+.pane-mini:disabled { color: var(--muted); opacity: .5; cursor: default; }
+/* 顶上那一行不完整（字节起点落在行中间）：正文上沿一条虚线 ——
+   只标记，不改行、也不伪造一条完整行。 */
+.log-lines[data-partial-head="1"] { border-top: 2px dashed var(--warn); }
+.pane-stat {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  /* 统计行是工具栏里唯一可缩的一项：放不下就省略，而不是把工具栏挤到第二行。 */
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 每个窗口的日志区：至少 50 行高、各自纵向滚动，但**可以变高**（flex 1）：
+   收起搜索/筛选行省下的高度就分给日志区，而不是变成窗口底部的空白。
+   50 行指屏幕行：长行会折行，所以实际看到的逻辑行可能少于 50 —— 宁可说清楚，
+   也不要为了凑数去截断证据。 */
+.log-lines {
+  flex: 1 1 0px;
+  /* ⚠️ 正文高度 = clamp(50 行, 看得见的高度)：
+     CSS 里 **min-height 优先于 max-height**，只写 max-height 的话 50 行会把上限顶破（踩过）。
+     不封顶的后果：工作区比视口高 → 点了“阅读位”后吸顶的窗口头把正文最上面十几行盖住，
+     而内容不满一屏的窗口又滚不动 —— 那几行永远看不到（用户报过）。 */
+  min-height: var(--pane-body-min);
+  max-height: var(--pane-body-max);
+  /* ⚠️ 用 scroll 而不是 auto：窗口里**还没有数据**时也要看得见这条滚动条，
+     否则用户在上面滚滚轮，既没反应也没任何提示，不知道是“内容就这些”还是“卡住了”。
+     顺带的好处：内容从无到有时不会因为多出一条滚动条而让正文抽动一下。 */
+  overflow-y: scroll;
+  overflow-x: hidden;
+  padding: 3px 8px;
+  font-family: var(--log-font-family);
+  font-size: var(--log-font-size);
+  line-height: var(--log-line-h);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #cfe0f4;
+}
+/* 空行也是证据里的一行，不能塌成 0 高度。 */
+.log-line { min-height: var(--log-line-h); }
+/* 滚轮到顶/到底时的轻微晃动：告诉用户“已经到头了”。
+   同时前端会把滚动拦在这一个窗口里 —— 日志到底了不应该把整个页面一起带走。 */
+@keyframes edge-nudge-up { 0% { transform: translateY(0); } 45% { transform: translateY(2px); } 100% { transform: translateY(0); } }
+@keyframes edge-nudge-down { 0% { transform: translateY(0); } 45% { transform: translateY(-2px); } 100% { transform: translateY(0); } }
+/* “到头了”那一下轻晃：**四个日志窗口、结果列表、历史运行那一窗共用**这两个类，
+   以后新加滚动区只要挂上 `edgeWheelTarget()` 就同时得到同一种手感。 */
+.edge-nudge-up { animation: edge-nudge-up .17s ease-out; }
+.edge-nudge-down { animation: edge-nudge-down .17s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .edge-nudge-up,
+  .edge-nudge-down { animation: none; }
+}
+
+/* 窗口可聚焦：这样 Ctrl+A“全选当前窗口”オ有作用对象，键盘也能直接滚日志。 */
+.log-lines:focus { outline: 1px solid var(--accent-line); outline-offset: -1px; }
+
+/* 行号/时间戳用伪元素显示：它们不进入 textContent，所以复制与选区里不会多出字符。
+   data-prefix 决定前缀组合（none / ln / time / both）。 */
+.log-lines .log-line::before { color: #5f7086; }
+.log-lines[data-prefix="ln"] .log-line::before { content: attr(data-ln); }
+.log-lines[data-prefix="time"] .log-line::before { content: attr(data-time); }
+.log-lines[data-prefix="both"] .log-line::before { content: attr(data-ln) attr(data-time); }
+
+/* 连续重复行折叠成一行，徽标“×N”同样是伪元素：看得见，但不会被复制走。 */
+.log-line[data-repeat]::after { content: " ×" attr(data-repeat); color: var(--warn); }
+
+/* 自动换行开关：关掉后横向滚动，而不是把行挤成好几段。 */
+.log-lines[data-wrap="0"] { white-space: pre; word-break: normal; overflow-x: auto; }
+
+/* 命中高亮：mark 只改样式不改文字，所以复制出来的还是原始行。 */
+.log-line mark { background: #33512c; color: #dff0d0; border-radius: 2px; }
+.log-line mark.current { background: var(--warn); color: #201404; }
+.log-line[data-current="1"] { background: #1d2733; }
+/* 被定位到的**证据区间**（一次定位覆盖的一行到多行）：**轻微绿底**（`--loc-bg`）。
+   ⚠️ 与“搜索命中”不是一回事：那个是**找**（`mark` 那一档，命中词自带底色）——
+   这里是“**这一段就是刚才定位到的证据**”（用户口径 2026-10-13：区间轻微绿底）。 */
+.log-line[data-hit="1"] { background: var(--loc-bg); }
+/* 当前**中心行**（这一段的头一行 / 刚跳过去的那一行）：稍强的绿边线 + 略深的绿底。
+   ⚠️ 边线画在**行的左边**（日志区那 8 px 内边距里，往左 3 px），不能画在行内左侧 ——
+   那里正是行号的位置（PW-UX-001 的“黄色竖线光标遮住行号”就是这么来的）。 */
+.log-line[data-center="1"] { background: var(--loc-bg-strong); box-shadow: -3px 0 0 0 var(--loc); }
+
+.pending-pill {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-line);
+  background: #1b2a3a;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* 漂浮在窗口下方的临时提示必须避开底部那块（命令 dock / 常驻说明）：“避让”量
+   由 JS 写在窗口的 --pane-foot-h 上（没有底栏的窗口是 0）。 */
+.pane-notice {
+  position: absolute;
+  left: 10px;
+  bottom: calc(10px + var(--pane-foot-h, 0px));
+  max-width: calc(100% - 20px);
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #1b2a3a;
+  color: var(--text);
+  pointer-events: none;
+}
+
+/* 常驻说明（解码窗口为什么没有内容）：与上面的临时提示不同，它会**一直留在那里**，
+   直到前置条件满足（开始解码）才消失 —— 一个空窗口必须能自己解释自己。
+   它是窗口内的流式元素：只减少这一窗的日志高度，不改变四个窗口的等高关系。 */
+.pane-why {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  background: #1b2a3a;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ws-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.panic-host:empty { display: none; }
+
+/* --------------------------------------------------------------- assertion */
+.asserts { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; }
+
+.assert {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.assert[data-status="pass"] { border-left-color: var(--pass); }
+.assert[data-status="fail"] { border-left-color: var(--fail); }
+.assert .id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.assert .desc { font-size: 12px; }
+.assert .kv { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+
+/* Crash card: the frames are the whole point, so give them room and keep the
+   reproduction command selectable for copy/paste. */
+.panic { border-left-width: 3px; }.panic .frames {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.panic .cmd { margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); word-break: break-all; }
+
+/* ----------------------------------------------------------------- metrics */
+/* 指标趋势：零依赖的内联 SVG。用户 2026-10-06 提的改造：
+ * **左右两个窗格**，每窗一个指标、各自一个下拉框；窗格高 = 单个图表卡片高度的
+ * **两倍**（用户原话："当前已有的指标趋势图单个图表的两倍高度即可"）。
+ *
+ * ⚠️ 高度只有**一处**来源：`--chart-card-h`（单个图表卡片）⇒ 窗格 = 2 × 它。
+ *   ⚠️ 曲线的 viewBox 高度也必须跟着加倍（app.js 的 `PANE_CHART_SIZE`）——
+ *      `preserveAspectRatio="none"` 会把比例差异吃进去，只把框放大而 viewBox 不动，
+ *      曲线就只是被拉平在更大的框里，纵向分辨率一点也没多出来。 */
+:root {
+  --chart-card-h: 164px;   /* 标题 + 统计行 + 120 px 曲线 + 内边距（改造前实测 ≈164 px） */
+  --metric-pane-h: calc(2 * var(--chart-card-h));
+}
+.grid .wide { grid-column: 1 / -1; }
+
+.chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 0;
+}
+.chart-note { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.chart-note[data-kind="warn"] { color: var(--warn); }
+
+.metric-panes {
+  padding: 6px 10px 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.metric-pane {
+  display: flex;
+  flex-direction: column;
+  height: var(--metric-pane-h);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.metric-pane-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.metric-pane-no { flex: 0 0 auto; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.metric-pick,
+.metric-window,
+.metric-scale {
+  min-width: 0;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 1px 4px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.metric-pick { flex: 1 1 auto; }
+/* 时间窗与刻度只有几档，不需要抢宽度（指标名的那个下拉才是主角）。 */
+.metric-window,
+.metric-scale { flex: 0 0 auto; }
+.metric-pane-body {
+  flex: 1 1 0px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart {
+  flex: 1 1 0px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px 4px;
+}
+.chart .title {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.chart .title .key { color: var(--muted); font-size: 11px; }
+.chart .title .dir { margin-left: auto; font-size: 11px; color: var(--muted); }
+/* 大号当前值（任务管理器标题旁那个百分比）：一眼一个数，字节明细留在下面读数行里。 */
+.chart .title .now {
+  margin-left: 8px;
+  flex: 0 0 auto;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.chart .stats { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+/* 堆占用读数：由 `heap / heap_total` 现算 —— 高亮一点，别混进统计行。 */
+.chart .stats.heap-use { color: var(--accent); }
+/* 曲线撑满窗格剩下的地方（窗格高度是固定预算，统计行多一行也不会把曲线挤出框外）。 */
+.chart svg { width: 100%; flex: 1 1 0px; min-height: 0; display: block; }
+.chart .axis { stroke: var(--line); stroke-width: 1; }
+/* 水平网格：没有它，曲线中间那段高度读不出量（纯装饰，不参与任何判据）。 */
+.chart .grid { stroke: var(--line); stroke-width: 1; opacity: .5; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.chart .metric-series-line { stroke: var(--series-color); transition: opacity .12s, stroke-width .12s; }
+.metric-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; min-height: 22px; overflow: hidden; }
+.metric-legend button {
+  appearance: none; border: 0; padding: 2px 0; background: transparent; color: var(--text);
+  font: 11px var(--mono); cursor: default; white-space: nowrap; opacity: .88;
+}
+.metric-legend button i {
+  display: inline-block; width: 12px; height: 3px; margin: 0 5px 3px 0;
+  background: var(--series-color); vertical-align: middle;
+}
+.chart-multi [data-series].is-dim { opacity: .16; }
+.chart-multi .metric-series-line.is-focus { opacity: 1; stroke-width: 2.8; }
+.chart-multi .metric-legend button.is-focus { opacity: 1; }
+.chart .metric-series-detail { display: none; fill: var(--series-color); font-size: 10px; font-weight: 600; }
+.chart .metric-series-detail.is-focus { display: block; }
+.chart .dot { fill: var(--accent); }
+.chart .gap { stroke: var(--warn); stroke-dasharray: 3 3; stroke-width: 1.2; }
+.chart text { fill: var(--muted); font-size: 9px; font-family: var(--mono); }
+.chart .empty { font-size: 11px; color: var(--muted); }
+
+/* 窄屏：两个窗格上下堆叠（高度回到"两倍单图"，不再被压扁）。 */
+@media (max-width: 640px) {
+  .metric-panes { grid-template-columns: minmax(0, 1fr); }
+  .metric-pane { height: auto; min-height: var(--metric-pane-h); }
+}
+
+/* ----------------------------------------------------------------- history */
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+tbody tr:hover { background: var(--panel-2); }
+td.run { font-family: var(--mono); }
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--line);
+}
+.badge[data-result="PASS"] { color: var(--ok); border-color: var(--ok-border); }
+.badge[data-result="FAIL"] { color: var(--fail); border-color: var(--fail-border); }
+.badge[data-result="CANCELLED"], .badge[data-result="ERROR"] { color: var(--warn); border-color: var(--warn-border); }
+.badge[data-result="running"] { color: var(--accent); border-color: var(--accent-line); }
+
+/* 观察会话的状态徽标（RUNTIME_MODES §12）：说的是**这份记录的状态**（观察中 / 已结束 /
+  没有结束记录 / 读不出来），不复用 run 的 PASS/FAIL 语义 —— 一次观察不是“测试通过”。 */
+.badge[data-state="live"] { color: var(--accent); border-color: var(--accent-line); }
+.badge[data-state="closed"] { color: var(--text); border-color: var(--line); }
+.badge[data-state="open"] { color: var(--warn); border-color: var(--warn-border); }
+.badge[data-state="broken"] { color: var(--fail); border-color: var(--fail-border); }
+
+/* 模式化历史列表那一窗：可点的行给一只手（点击行为由 `renderHistory` 写在 data-* 上）。 */
+#runsBody tr.history-row { cursor: pointer; }
+#runsBody tr.history-row:hover { background: var(--panel-2); }
+#runsBody td.bad { color: var(--fail); }
+
+td .links { display: flex; gap: 8px; flex-wrap: wrap; }
+td a { color: var(--accent); text-decoration: none; font-size: 11px; }
+/* 证据链接（指标那一栏、报告那一栏）也走主题强调色：不写这一条就落到浏览器默认的蓝，
+   暖色（浅底）下那就是页面上最扎眼的一处蓝（用户口径 2026-10-13：暖色下不再显示蓝）。 */
+.links a { color: var(--accent); }
+td a:hover { text-decoration: underline; }
+
+@media (max-width: 640px) {
+  #offlinePanel .runbar-head,
+  #offlinePanel .runbar-head .actions { min-width: 0; }
+  #offlinePanel .runbar-head .actions { width: 100%; }
+  #offlinePanel .runbar-head .field {
+    display: flex;
+    flex: 1 1 100%;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
+  }
+  #offlinePanel #sessionPick {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
+}
+
+.footer {
+  padding: 8px 14px 20px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* 暖色主题：深色默认状态卡改用暖色表面，确保正文和语义状态文字仍满足 AA。 */
+:root[data-theme="warm"] .assert-domain,
+:root[data-theme="warm"] .run-progress,
+:root[data-theme="warm"] .message {
+  background: var(--panel-2);
+  color: var(--text);
+}
+:root[data-theme="warm"] .assert-domain[data-status="fail"] { color: var(--fail); }
+:root[data-theme="warm"] .message[data-kind="pass"] { color: var(--pass); }
+:root[data-theme="warm"] .message[data-kind="fail"] { color: var(--fail); }
+:root[data-theme="warm"] .message[data-kind="warn"] { color: var(--warn); }
+
+/* 键盘焦点是独立于 hover/选中态的显式环；两套主题都用语义焦点色。 */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <link rel="icon" href="data:,">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  (() => {
+    try {
+      const raw = window.localStorage.getItem('pw.theme');
+      const theme = raw === 'warm' ? 'warm' : 'dark';
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme === 'warm' ? 'light' : 'dark';
+    } catch (error) {
+      document.documentElement.dataset.theme = 'dark';
+      document.documentElement.style.colorScheme = 'dark';
+    }
+  })();
+</script>
+<title>嵌入式实验与诊断工作台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">PW</span>
+    <div>
+      <h1>嵌入式实验与诊断工作台 <span class="tag">Workbench</span></h1>
+    </div>
+  </div>
+  <!-- 四个入口与标题**同一水平面**（用户口径 2026-10-12）：自动验证 / 实时观察 / 离线诊断 / 平台体检 ——
+       顺序固定，每项一个简洁图标 + 标签，**四项等宽等高**（尺寸由 CSS 的 --nav-w/--nav-h 定，
+       不由标签长短或有没有图标决定）。
+       ⚠️ 图标是内联 SVG（不是字符画）；`aria-label` 只在按钮/链接自己身上，图标 `aria-hidden`。 -->
+  <div class="modes" id="modes" role="group" aria-label="运行模式与平台入口">
+    <button type="button" class="mode-btn" data-mode="auto" aria-pressed="true">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.3"></circle>
+        <path d="M10.2 8.4 15.9 12l-5.7 3.6z" fill="currentColor" stroke="none"></path>
+      </svg><span>自动验证</span>
+    </button>
+    <button type="button" class="mode-btn" data-mode="live" aria-pressed="false">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"></circle>
+        <path d="M8.6 15.4A4.8 4.8 0 0 1 8.6 8.6M15.4 8.6A4.8 4.8 0 0 1 15.4 15.4"></path>
+        <path d="M6 18A8.5 8.5 0 0 1 6 6M18 6A8.5 8.5 0 0 1 18 18"></path>
+      </svg><span>实时观察</span>
+    </button>
+    <button type="button" class="mode-btn" data-mode="offline" aria-pressed="false">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.3"></circle>
+        <path d="M12 7.1V12l3.3 2.1"></path>
+      </svg><span>离线诊断</span>
+    </button>
+    <a class="doctor-link" href="/doctor" title="打开只读平台体检；默认不打开串口、不构建、不联网">
+      <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="4.6" width="18" height="14.8" rx="2.2"></rect>
+        <path d="M6.4 12h2.5l1.5-3 2.6 5.6 1.5-2.6h3.1"></path>
+      </svg><span>平台体检</span>
+    </a>
+  </div>
+  <div class="topbar-tools">
+    <!-- 主题（用户口径 2026-10-12）：两个入口各一个**图标** —— 月亮 = 深色调试、太阳 = 暖色工作台。
+         ⚠️ 图标是内联 SVG，不是字符画（字符会跑进 `textContent`： 踩过）；
+         图标本身不进无障碍树（`aria-hidden`），含义写在 `aria-label` / `title` 上。 -->
+    <div class="theme-switch" role="group" aria-label="主题">
+      <span class="theme-label" aria-hidden="true">主题</span>
+      <button type="button" class="theme-btn" id="themeDark" data-theme-id="dark"
+              aria-pressed="true" aria-label="深色调试" title="深色调试">
+        <svg class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20.6A8.6 8.6 0 0 1 12 3.4A11 11 0 0 0 12 20.6z"></path>
+        </svg>
+      </button>
+      <button type="button" class="theme-btn" id="themeWarm" data-theme-id="warm"
+              aria-pressed="false" aria-label="暖色工作台" title="暖色工作台">
+        <svg class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2"></circle>
+          <path d="M12 2.6v2.3M12 19.1v2.3M2.6 12h2.3M19.1 12h2.3M5.5 5.5l1.6 1.6M16.9 16.9l1.6 1.6M18.5 5.5l-1.6 1.6M7.1 16.9l-1.6 1.6"></path>
+        </svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!--  / D8-R（requirements §11.1，2026-10-11）：自动验证与实时观察**各自只有一个
+     设备控制面板** —— 通信口卡片、本屏状态/动作与紧凑数据行都在同一外框里：
+       上半区：左 ~70%（选择通信口 + 嗅探 + 设备卡）｜右 ~30%（本屏的状态与动作）
+       底部行：本屏的紧凑数据/动作行（实时=TX/RX 持续 身份 解码；自动=固件/套件/采集/启动）
+     ⚠️ 离线诊断**不显示**它：那一路不碰串口，也就不需要选设备（它按包或历史 manifest 回放）。 -->
+<div id="workbar" data-mode="auto">
+<section class="panel controlpanel" id="deviceBar" hidden>
+  <div class="cp-top">
+    <div class="cp-pick">
+      <div class="cp-head">
+        <span class="cp-title">选择通信口</span>
+        <button id="sniffBtn" type="button" data-state="idle"
+                title="向本机台架点名的通信口逐条发一次只读身份查询：不烧录、不复位、不清设备数据"><span class="sniff-spin" aria-hidden="true"></span><span id="sniffLabel">嗅探</span></button>
+        <span id="sniffHint" class="hint" data-kind="" hidden></span>
+      </div>
+      <!-- 每张卡片一个原生 radio ⇒ “高亮加勾选”用得上浏览器自带的可访问性：方向键切换、
+           读屏器报选中状态、Tab 进得去。没嗅探过就什么都不显示 —— 本页绝不自作主张去嗅。
+           ⚠️ 卡片只常驻**两层**：`通信口 + 设备名称` 与 `身份状态 + 软件版本`；
+              最近活动/收到字节/可用固件清单/拒绝原因全在悬停里（§11.1）。 -->
+      <div id="sniffCards" class="sniff-cards" role="radiogroup"
+           aria-label="本次嗅探看到的设备（自动验证与实时观察都用这一份选择）"
+           title="一张张横向排列：一屏最多完整显示 3 张，更多时把鼠标放在这里滚滚轮（逐卡移动、自动吸附）" hidden></div>
+    </div>
+    <!-- 右列（~30%）：自动验证只放“端口/身份就绪”的结论；实时观察放连接状态 + 三个动作。
+         ⚠️ 两个分支同处一个外框（不再是上下两条通栏面板）。 -->
+    <div class="cp-side">
+      <div class="port-status" id="portStatus" role="status" aria-live="polite"></div>
+      <div class="cp-side-live" id="liveStatus" hidden>
+        <div class="run-id" id="observeState" data-state="idle">未连接</div>
+        <div class="actions">
+          <!-- ⚠️ 用户口径（2026-10-12）：**这一项不再显示**（HTML 里就 `hidden`，JS 也只会按住它）。
+               口由设备卡片定，观察哪一份固件由卡片推（设备登记 / 字典 / 解码能力都随它）；
+               没选设备时同样不问（连都连不了，列一堆本机登记的固件只是噪音）。
+               原来那句「目标：…（由所选卡片 #1 COM<n> 推导，不用再选）」也一并删掉了。
+               这个 select 留在 DOM 里只为把推导结果写出来给页面自己用（`chain` / start 请求）。 -->
+          <label class="field" id="observeTargetField" hidden
+                 title="实时观察哪一份固件：由所选卡片推导；只换选中项，不连接、不打开串口">
+            目标
+            <select id="observeFirmware" aria-label="实时观察的固件"></select>
+          </label>
+          <button id="observeConnect" class="primary">连接</button>
+          <button id="observeDisconnect" disabled>断开</button>
+          <button id="observeReconnect" disabled title="关闭并重新打开串口：不复位、不清设备数据；成功后自动查询身份">重连</button>
+          <!-- 需求 §6.10：基础串口参数（波特率 / 数据位 / 校验位 / 停止位）。
+               选项与现值**都来自服务端**（`/api/state.observe.serial`）：页面不自己维护
+               第二份默认值。连接与重连时随请求发出去，服务端在**打开之前**设上去。 -->
+          <div class="serial-row" id="serialRow">
+            <label class="field" title="波特率：两边要一致，否则收到的是乱码">波特
+              <select id="serialBaud" aria-label="波特率"></select>
+            </label>
+            <label class="field" title="数据位（一般 8）">数据
+              <select id="serialBytesize" aria-label="数据位"></select>
+            </label>
+            <label class="field" title="校验位：N 无 / E 偶 / O 奇 / M 标记 / S 空格">校验
+              <select id="serialParity" aria-label="校验位"></select>
+            </label>
+            <label class="field" title="停止位（一般 1）">停止
+              <select id="serialStopbits" aria-label="停止位"></select>
+            </label>
+          </div>
+          <!-- 只用来说一句实话：所选卡片上一条观察链都没有（连接按钮因此是灰的）。 -->
+          <span class="hint" id="observeTargetNote" hidden></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 底部：本屏的紧凑数据/动作行（与上半区**同一外框**） -->
+  <div class="cp-bottom">
+    <div class="cp-row" id="runControls">
+      <!--  / D5：不再用“板 A / 板 B”这种**静态名字**选目标。“目标”不再由人选
+           （它由所选的固件推导）：这个 select 留在 DOM 里供 JS 读/写推导结果。 -->
+      <label class="field" hidden>目标
+        <select id="runTarget" aria-label="自动验证目标（由所选固件推导）"></select>
+      </label>
+      <label class="field">固件
+        <select id="runFirmware" aria-label="自动验证固件"></select>
+      </label>
+      <label class="field">套件
+        <select id="runSuite" aria-label="自动验证套件"></select>
+      </label>
+      <label class="field" title="默认值来自当前项目包，可在发起前调整">
+        采集
+        <input id="observeSeconds" type="number" min="5" max="240" step="1" value="40">
+        <span class="unit">秒</span>
+      </label>
+      <button id="startRun" class="primary">启动验证</button>
+      <button id="cancelRun" disabled>取消</button>
+      <span id="startHint" class="hint" data-kind="" hidden></span>
+      <button id="moreToggle" type="button" class="tool-ico" aria-expanded="false"
+              aria-controls="moreOptions" title="低频选项：复位脉冲、逐次授权与项目运行参数">更多设置</button>
+    </div>
+    <!-- §11.1：低频选项进**默认收起**的“更多设置”（它在这个外框里，不另起面板）。 -->
+    <div class="cp-more" id="moreOptions" hidden>
+      <div id="runOptions" class="actions" aria-label="项目运行参数"></div>
+      <label class="field check" title="是否在采集前执行当前目标声明的复位计划">
+        <input id="resetPulse" type="checkbox" checked>
+        复位以捕获启动日志
+      </label>
+      <label id="flashConfirmField" class="field check" hidden
+             title="所选固件会覆盖设备 Flash；每次运行都必须重新确认">
+        <input id="flashConfirm" type="checkbox">
+        我确认覆盖设备 Flash
+      </label>
+    </div>
+    <div class="cp-row cp-live" id="liveRow" hidden>
+      <!-- D8：实时计数曾经就在这一行；用户口径（2026-10-12）把它搬到工作台那一栏
+           （“分栏 N 栏”旁边）—— 它说的是**日志工作台自己**收了多少字节，
+           跟底部的连接状态/身份 chip 不是一回事。详细那一行（会话号/证据目录/最近收发…）
+           依旧挂在 `#observeStat` 的 title 上，不占屏幕。 -->
+      <span class="observe-stat" id="observeStat">—</span>
+      <!-- 身份/字典/解码**只给结论**（用户口径 2026-10-11 验收 P1）；
+           依据（自报字段、字典来源与条数、拒绝解码的原因与字典清单）在「详情」与悬停里。 -->
+      <span class="observe-ident" id="observeIdent">
+        <span class="ident-chip" id="identSwitch" data-kind="warn" hidden></span>
+        <span class="ident-chip" id="identChip" data-kind="">—</span>
+        <span class="ident-chip" id="identDict" data-kind="" hidden></span>
+        <span class="ident-chip" id="identDecode" data-kind="" hidden></span>
+        <button type="button" id="identDetailBtn" class="ident-more" aria-expanded="false"
+                aria-controls="identDetail"
+                title="展开完整身份与字典细节（也是悬停里那一份）：设备自报的字段、字典来源与条数、拒绝解码的原因与可用字典清单、平台还不能做什么" hidden>详情</button>
+      </span>
+    </div>
+    <!--  / L4b：受控用例目录（只在实时观察这一屏显示）。
+         ⚠️ 页面在这条路上只做三件事：把**服务端给的目录**画出来、把选中的用例交上去、
+         显示这一批跑到哪了。能不能跑、为什么不能，全在服务端（`live_test_catalog`）
+         —— 页面照拄那句话，不自己判兼容性、也不自己拼命令（需求 §8）。
+         刷新不重复执行：页面从不自动启动，状态全部来自 `/api/state`。 -->
+    <div class="cp-row cp-live live-tests" id="liveTestPanel" hidden>
+      <div class="live-tests-head">
+        <span class="live-tests-title">受控用例</span>
+        <span class="hint" id="liveTestReason" hidden></span>
+        <button id="startLiveTests" disabled>启动</button>
+        <button id="cancelLiveTests" disabled>取消</button>
+        <span class="hint" id="liveTestStatus" hidden></span>
+      </div>
+      <ul class="live-tests-list" id="liveTestCases"></ul>
+    </div>
+    <!-- 「详情」是浮层：默认 hidden，展开**不推动**这个面板的布局。 -->
+    <div class="observe-note ident-detail" id="identDetail" role="note" hidden></div>
+  </div>
+  <div class="message" id="runMessage" hidden></div>
+  <div class="message" id="observeMessage" hidden></div>
+</section>
+
+<section class="panel runbar" id="autoPanel" hidden>
+  <!-- D8-R（§11.1）：固件/套件/采集/启动已经搬进**同一个控制面板**的底部行；
+       这里只留“这次 run 是什么、跑到哪儿了”（run 标识、用例选择、步骤、进度）。
+       ⚠️ 模式**动作**不再另起通栏面板 —— 这正是 §11.1 点名要改的那一件事。 -->
+  <div class="runbar-head">
+    <div class="run-meta">
+      <div class="run-id" id="runId">尚未发起任何 run</div>
+      <div class="run-sub" id="runSub"></div>
+    </div>
+    <div class="autotest-picker" id="autotestPicker" hidden>
+      <table id="autotestCases">
+        <thead><tr><th>选择</th><th>测试用例</th><th>类型 / 超时</th><th>参数与授权</th></tr></thead>
+        <tbody id="autotestCaseRows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!--  / D6：设备卡片已经挤到**共享的设备栏**去了（自动验证与实时观察共用一份
+       选择）；这里只留自动验证自己那几段。 -->
+
+  <ol class="steps" id="steps"></ol>
+
+  <!-- ：长窗口（上限 240 s）需要"实际生效值 + 进度 + 最近证据"，
+       否则"安静地等"看起来就是"卡死"。由 2 s 的状态轮询重画。 -->
+  <div class="run-progress" id="runProgress" hidden></div>
+</section>
+
+<section class="panel runbar" id="offlinePanel" hidden>
+  <div class="runbar-head">
+    <div class="run-meta">
+      <div class="run-id" id="offlineState" data-state="idle">离线诊断</div>
+      <div class="run-sub" id="offlineDetail"></div>
+    </div>
+    <div class="actions">
+      <label class="field" title="本机已落盘的实时观察会话（新的在前）。带「进行中」的是当前正在写的那个会话">会话
+        <select id="sessionPick" aria-label="要回看的会话"></select>
+      </label>
+      <button id="sessionLoad" class="primary" disabled>回看这次会话</button>
+      <button id="sessionRefresh" title="重新读一次会话清单：刚结束的会话会出现在这里">刷新清单</button>
+      <!--  收口（RUNTIME_MODES §9.4）：导出口只属于离线诊断，只写一个会话号。
+           没有选中任何会话时**藏起来**（不给一个点不动的链接）。 -->
+      <a id="sessionBundle" class="tool-ico bundle-link" download hidden>导出诊断包</a>
+      <span class="offline-count" id="sessionCount">—</span>    </div>
+  </div>
+  <div class="observe-meta">
+    <span class="observe-stat" id="sessionStat">还没有选择会话</span>
+    <div class="observe-note" id="sessionNote" hidden></div>
+  </div>
+  <div class="import-line">
+    <label class="field" title="只接受本工具导出的诊断包（zip）">诊断包
+      <input type="file" id="importFile" accept=".zip,application/zip" aria-label="要导入的诊断包">
+    </label>
+    <button id="importRun" class="primary" disabled>导入诊断包</button>
+    <span class="import-hint" id="importHint">选择一个诊断包（.zip）</span>
+  </div>
+  <div class="import-progress" id="importProgress" hidden>
+    <progress id="importBar" max="100" value="0" aria-label="导入进度"></progress>
+    <span class="import-step" id="importStep" role="status"></span>
+    <button id="importCancel" class="danger" hidden title="停下这次导入">取消导入</button>
+  </div>
+  <div class="message" id="offlineMessage" hidden></div>
+</section>
+</div>
+
+<main class="grid">
+  <section class="panel wide workspace" id="logWorkspace" aria-label="统一日志工作台">
+    <div class="ws-head">
+      <span class="ws-title">统一日志工作台</span>
+      <div class="ws-tools">
+        <div class="split-menu" id="splitMenu">
+          <button type="button" id="splitToggle" class="tool-ico" aria-pressed="false" aria-haspopup="true" aria-expanded="false" title="分栏：鼠标移到按钮上选五窗/1～5 栏；拖动分隔条改窗口宽度，拖到最窄会收成一个竖排标签（Esc 回到五窗）" aria-label="分栏：选 1 到 5 栏">分栏 <span class="split-count" id="splitCount">2 栏</span></button>
+          <div class="split-pop" id="splitPop" hidden>
+            <p class="split-pop-title">显示几栏？<span class="muted">（其余窗口收成右侧标签，点一下就能换；临时形态，刷新后回到五窗）</span></p>
+            <div class="split-cols" role="group" aria-label="栏数">
+              <button type="button" class="tool-ico split-col" data-n="0" aria-pressed="false" title="五个窗口全展开（宽屏一行 / 中等 2×2 + 1 / 窄屏纵向）">五窗</button>
+              <button type="button" class="tool-ico split-col" data-n="1" aria-pressed="false" title="只展开一个窗口，其余收成标签">1 栏</button>
+              <button type="button" class="tool-ico split-col" data-n="2" aria-pressed="false" title="展开两个窗口，其余收成标签；中间一根可拖动的分隔条">2 栏</button>
+              <button type="button" class="tool-ico split-col" data-n="3" aria-pressed="false" title="展开三个窗口，其余收成标签；两根可拖动的分隔条">3 栏</button>
+              <button type="button" class="tool-ico split-col" data-n="4" aria-pressed="false" title="展开四个窗口，其余收成标签；三根可拖动的分隔条">4 栏</button>
+              <button type="button" class="tool-ico split-col" data-n="5" aria-pressed="false" title="五个窗口全展开（四根可拖动的分隔条）">5 栏</button>
+            </div>
+            <p class="split-pop-hint">窗口宽度记在本机；拖分隔条只重分相邻两个窗口，←/→ 微调；双击标签恢复等宽</p>
+          </div>
+        </div>
+        <!-- 实时收发计数：`TX 348 B | RX 12.6 KiB`（用户口径 2026-10-12：搬到“分栏 N 栏”旁边，
+             **只在实时观察那一屏显示** —— 另外两屏没有会话在收数，摆着只会让人多问一句）。
+             宽度由 CSS **定死**（等宽数字 + 固定 `width`，不是 `min-width`）：数值从 `0 B`
+             跳到 `12.6 KiB`、或 `1.0 KiB` 变 `12.6 KiB` 时，右边的控件一个像素都不动；
+             2 s 轮询刷新同样不得推动任何控件（真机实测过：写 min-width 时每过一档推 5 px）。
+             单位换算是 `observeCounters()` 算好的（页面不在这里自己换算）。 -->
+        <span class="observe-counts ws-counts" id="observeCounters" aria-label="实时收发计数" hidden>
+          <span class="observe-count" id="observeTx">TX —</span>
+          <span class="observe-sep" aria-hidden="true">|</span>
+          <span class="observe-count" id="observeRx">RX —</span>
+        </span>
+        <button type="button" id="alignWorkspace" class="tool-ico" title="最佳阅读位置：把工作区底部对齐浏览器底部" aria-label="调整到最佳阅读位置">阅读位</button>
+        <button type="button" id="foldAll" class="tool-ico" aria-pressed="false" title="把五个窗口的搜索/筛选行一起收起或展开（也可以逐窗点文件名旁的 ▾，或按 Alt+F）" aria-label="收起或展开五个窗口的搜索与筛选行">收起筛选行</button>
+        <!--  收口（RUNTIME_MODES §9.4，2026-10-11）：这一栏被三种模式复用，
+             **不再常驻诊断包按钮** —— 常驻会让人以为三种模式都在负责会话包导出。
+             导出口只属于离线诊断（`#sessionBundle`）。 -->
+        <button type="button" id="fontMinus" class="tool-ico" title="所有窗口的日志字号缩小（偏好存在本机浏览器）" aria-label="字号缩小">A−</button>
+        <span class="ws-stat" id="fontSize">12 px</span>
+        <button type="button" id="fontPlus" class="tool-ico" title="所有窗口的日志字号放大（偏好存在本机浏览器）" aria-label="字号放大">A+</button>
+        <!-- 实时降载的记账（L5）：没降载时不显示（空话会让人以为一直在降载）；
+             一旦有合并/丢弃/落后就必须写出来。 -->
+        <span class="ws-stat ws-shed" id="shedStat" role="status" aria-live="polite" hidden></span>
+        <label class="ws-stat" title="等宽字体：只影响显示，不改变证据">字体
+          <select id="fontFamily" aria-label="日志字体">
+            <option value="">默认等宽</option>
+            <option value="Cascadia Mono">Cascadia Mono</option>
+            <option value="Consolas">Consolas</option>
+            <option value="JetBrains Mono">JetBrains Mono</option>
+            <option value="Courier New">Courier New</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <!-- 页面是旧的（服务重启 / 前端已更新）：就长在工作台顶上，点一下刷新。不自动刷新。 -->
+    <div class="stale-note" id="staleBanner" role="status" aria-live="polite" hidden></div>
+    <!-- 全文件搜索（ / L4）：每一窗自己的搜索框只搜**已加载**的内容，
+         这一栏搜的是**整个文件** —— 服务端一块一块地扫，这里显示进度、能取消、
+         命中点一下按 Range 跳到那个字节附近的窗口。两者不互相冒充。 -->
+    <div class="ws-fullsearch" id="fullSearch" role="group" aria-label="全文件搜索（服务端分块扫描）">
+      <span class="ws-fs-title">搜索整个文件</span>
+      <select id="fullSearchEvidence" aria-label="要搜索的证据"></select>
+      <select id="fullSearchMode" aria-label="搜索模式">
+        <option value="text">文本</option>
+        <option value="bytes">字节（\n \xNN）</option>
+        <option value="hex">十六进制</option>
+      </select>
+      <input type="search" id="fullSearchQuery" class="find-input" placeholder="关键词（本版不做正则）" aria-label="全文件搜索关键词" autocomplete="off" spellcheck="false">
+      <button type="button" id="fullSearchStart" class="tool-ico">开始</button>
+      <button type="button" id="fullSearchCancel" class="tool-ico" hidden>取消</button>
+      <span class="ws-stat ws-fs-status" id="fullSearchStatus" role="status" aria-live="polite">搜整个文件（不只已加载的那一段）</span>
+      <div class="ws-fs-results" id="fullSearchResults" hidden></div>
+    </div>
+    <div class="log-grid" id="logGrid">
+      <section class="log-pane" id="pane-tool" data-source="tool">
+        <div class="pane-head">
+          <div class="pane-row">
+            <span class="pane-title" title="PlatformIO stdout/stderr">工具输出</span>
+            <span class="pane-file">tool.log</span>
+            <button type="button" id="fold-tool" class="fold-ico" aria-expanded="true" aria-controls="find-tool" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
+            <button type="button" id="full-tool" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
+            <div class="pane-tools">
+              <button type="button" id="pause-tool" data-action="pause" aria-pressed="false">暂停</button>
+              <button type="button" id="tail-tool" data-action="tail" title="补齐暂停期间到达的内容并跳到这个窗口的最新一行（Alt+L 作用于最近操作过的窗口）">跳尾</button>
+              <button type="button" id="older-tool" class="pane-mini" hidden title="向前加载更早的一段字节（这份证据超过内联阈值、只装了尾部一段时才出现）">向前加载</button>
+              <a id="download-tool" class="pane-link" download>下载</a>
+              <span class="pane-stat" id="stat-tool">0 行</span>
+            </div>
+          </div>
+          <div class="pane-find" id="find-tool">
+            <input type="search" id="search-tool" class="find-input" placeholder="搜索…" aria-label="在工具输出里搜索" autocomplete="off" spellcheck="false">
+            <button type="button" id="regex-tool" class="tool-ico" aria-pressed="false" title="把搜索内容当正则表达式（无效正则立刻提示，不会卡住）" aria-label="正则搜索">.*</button>
+            <button type="button" id="prev-tool" class="tool-ico" title="上一个命中（Shift+Enter 也可用）" aria-label="上一个命中">↑</button>
+            <button type="button" id="next-tool" class="tool-ico" title="下一个命中（Enter 也可用）" aria-label="下一个命中">↓</button>
+            <span class="find-hits" id="hits-tool" aria-live="polite">0/0</span>
+            <button type="button" id="exclude-tool" class="tool-ico excl-ico" aria-pressed="false" title="文本排除：匹配的行从这个窗口的显示里去掉（不删证据、不改文件，下载始终是完整文件）。条件在「选项」里填；已经填过时点一下 = 停用，再点一下 = 恢复" aria-label="文本排除，停用或启用">排除 <span class="excl-count" id="excludeCount-tool">0</span></button>
+            <button type="button" id="errorsonly-tool" class="tool-ico" aria-pressed="false" title="只看错误：级别 [E] 以及未解析的结构化记录" aria-label="只看错误">错误</button>
+            <button type="button" id="menu-tool" class="tool-ico" aria-expanded="false" title="更多阅读选项：级别/模块过滤、行号、时间戳、重复折叠、换行、复制、全选" aria-label="更多阅读选项">选项</button>
+            <div class="pane-menu" id="panel-tool" hidden></div>
+          </div>
+        </div>
+        <div class="log-lines" id="lines-tool" role="region" aria-label="工具输出日志" tabindex="0"></div>
+        <div class="pane-notice" id="notice-tool" role="status" aria-live="polite" hidden></div>
+        <button type="button" class="pending-pill" id="pending-tool" hidden>
+          ▼ 新内容 <span id="pendingCount-tool" aria-live="polite">0</span> 行
+        </button>
+      </section>
+      <!-- 用户口径（2026-10-10）：测试阶段**也是一个窗口** —— 紧挨“工具输出”，四窗变五窗。
+           它与别的窗口同一套操作（折叠筛选行 / 全屏 / 收起成标签 / 拖宽 / 分栏 / 独立滚动 /
+           筛选 / 复制 / 暂停 / 跳尾），但它不是**行流**：正文是阶段卡（<li class="stage">），
+           所以行级开关（级别 / 模块 / 行号 / 时间戳 / 折叠重复 / 换行 / 排除 / 只看错误）与
+           “向前加载 / 下载”在它身上不适用 ⇒ 那几个按钮**根本不出现**（摆一个点了没反应的
+           按钮，比没有这个按钮更糟）。它也没有自己的证据文件（没链接可给）。
+           ⚠️ 正文容器 id 仍是 `lines-stage`：行机制靠 `id` 约定绑 DOM（`buildWorkspace`），
+              而卡片由 `renderStepCards()` 自己画（行机制对 cards 这一窗整个跳过）。 -->
+      <section class="log-pane" id="pane-stage" data-source="stage">
+        <div class="pane-head">
+          <div class="pane-row">
+            <span class="pane-title" title="本轮 run 的阶段事件（用例或受控序列的每一步）· 双击这一行可把这一窗收成标签">测试阶段</span>
+            <span class="pane-file">阶段事件</span>
+            <button type="button" id="fold-stage" class="fold-ico" aria-expanded="true" aria-controls="find-stage" title="收起这一窗的筛选行（Alt+F）：筛选条件仍然生效，省下的高度会分给日志区（各窗等高，所以是一起变高）" aria-label="收起或展开筛选行">▾</button>
+            <button type="button" id="full-stage" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
+            <div class="pane-tools">
+              <button type="button" id="pause-stage" data-action="pause" aria-pressed="false" title="只冻结这一窗的画面：阶段事件照旧在收">暂停</button>
+              <button type="button" id="tail-stage" data-action="tail" title="补齐冻结期间到达的阶段并跳到最新的一张卡（Alt+L 作用于最近操作过的窗口）">跳尾</button>
+              <span class="pane-stat" id="stat-stage">0 个阶段</span>
+            </div>
+          </div>
+          <div class="pane-find" id="find-stage">
+            <input type="search" id="search-stage" class="find-input" placeholder="筛选阶段…" aria-label="在测试阶段里筛选" autocomplete="off" spellcheck="false">
+            <button type="button" id="prev-stage" class="tool-ico" title="上一个命中的阶段（Shift+Enter 也可用）" aria-label="上一个命中">↑</button>
+            <button type="button" id="next-stage" class="tool-ico" title="下一个命中的阶段（Enter 也可用）" aria-label="下一个命中">↓</button>
+            <span class="find-hits" id="hits-stage" aria-live="polite">0/0</span>
+            <button type="button" id="menu-stage" class="tool-ico" aria-expanded="false" title="更多阅读选项：复制这一窗、全选、清除筛选" aria-label="更多阅读选项">选项</button>
+            <div class="pane-menu" id="panel-stage" hidden></div>
+          </div>
+        </div>
+        <div class="log-lines stage-lines" id="lines-stage" role="region" aria-label="测试阶段" tabindex="0">
+          <ul class="stage-list" id="stageList"></ul>
+        </div>
+        <div class="pane-notice" id="notice-stage" role="status" aria-live="polite" hidden></div>
+        <button type="button" class="pending-pill" id="pending-stage" hidden>
+          ▼ 新阶段 <span id="pendingCount-stage" aria-live="polite">0</span> 个
+        </button>
+      </section>
+      <section class="log-pane" id="pane-raw" data-source="raw">
+        <div class="pane-head">
+          <div class="pane-row">
+            <span class="pane-title" title="设备串口字节（不是固件镜像）">原始串口</span>
+            <span class="pane-file">raw.bin</span>
+            <button type="button" class="pane-capture" id="cap-raw" aria-label="放开键盘"></button>
+            <button type="button" id="fold-raw" class="fold-ico" aria-expanded="true" aria-controls="find-raw" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
+            <button type="button" id="full-raw" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
+            <div class="pane-tools">
+              <button type="button" id="pause-raw" data-action="pause" aria-pressed="false">暂停</button>
+              <button type="button" id="tail-raw" data-action="tail" title="补齐暂停期间到达的内容并跳到这个窗口的最新一行（Alt+L 作用于最近操作过的窗口）">跳尾</button>
+              <button type="button" id="older-raw" class="pane-mini" hidden title="向前加载更早的一段字节（这份证据超过内联阈值、只装了尾部一段时才出现）">向前加载</button>
+              <a id="download-raw" class="pane-link" download>下载</a>
+              <span class="pane-stat" id="stat-raw">0 行</span>
+            </div>
+          </div>
+          <div class="pane-find" id="find-raw">
+            <input type="search" id="search-raw" class="find-input" placeholder="搜索…" aria-label="在原始串口里搜索" autocomplete="off" spellcheck="false">
+            <button type="button" id="regex-raw" class="tool-ico" aria-pressed="false" title="把搜索内容当正则表达式（无效正则立刻提示，不会卡住）" aria-label="正则搜索">.*</button>
+            <button type="button" id="prev-raw" class="tool-ico" title="上一个命中（Shift+Enter 也可用）" aria-label="上一个命中">↑</button>
+            <button type="button" id="next-raw" class="tool-ico" title="下一个命中（Enter 也可用）" aria-label="下一个命中">↓</button>
+            <span class="find-hits" id="hits-raw" aria-live="polite">0/0</span>
+            <button type="button" id="exclude-raw" class="tool-ico excl-ico" aria-pressed="false" title="文本排除：匹配的行从这个窗口的显示里去掉（不删证据、不改文件，下载始终是完整文件）。条件在「选项」里填；已经填过时点一下 = 停用，再点一下 = 恢复" aria-label="文本排除，停用或启用">排除 <span class="excl-count" id="excludeCount-raw">0</span></button>
+            <button type="button" id="errorsonly-raw" class="tool-ico" aria-pressed="false" title="只看错误：级别 [E] 以及未解析的结构化记录" aria-label="只看错误">错误</button>
+            <button type="button" id="menu-raw" class="tool-ico" aria-expanded="false" title="更多阅读选项：级别/模块过滤、行号、时间戳、重复折叠、换行、复制、全选" aria-label="更多阅读选项">选项</button>
+            <div class="pane-menu" id="panel-raw" hidden></div>
+          </div>
+        </div>
+        <div class="log-lines" id="lines-raw" role="region" aria-label="原始串口日志" tabindex="0"></div>
+        <div class="pane-notice" id="notice-raw" role="status" aria-live="polite" hidden></div>
+        <button type="button" class="pending-pill" id="pending-raw" hidden>
+          ▼ 新内容 <span id="pendingCount-raw" aria-live="polite">0</span> 行
+        </button>
+      </section>
+      <section class="log-pane" id="pane-decoded" data-source="decoded">
+        <div class="pane-head">
+          <div class="pane-row">
+            <span class="pane-title" title="Token 解码结果：decode 步骤由 raw.bin 重新推导">解码日志</span>
+            <span class="pane-file">decoded.log</span>
+            <button type="button" class="pane-capture" id="cap-decoded" aria-label="放开键盘"></button>
+            <button type="button" id="fold-decoded" class="fold-ico" aria-expanded="true" aria-controls="find-decoded" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
+            <button type="button" id="full-decoded" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
+            <div class="pane-tools">
+              <button type="button" id="pause-decoded" data-action="pause" aria-pressed="false">暂停</button>
+              <button type="button" id="tail-decoded" data-action="tail" title="补齐暂停期间到达的内容并跳到这个窗口的最新一行（Alt+L 作用于最近操作过的窗口）">跳尾</button>
+              <button type="button" id="older-decoded" class="pane-mini" hidden title="向前加载更早的一段字节（这份证据超过内联阈值、只装了尾部一段时才出现）">向前加载</button>
+              <a id="download-decoded" class="pane-link" download>下载</a>
+              <span class="pane-stat" id="stat-decoded">0 行</span>
+            </div>
+          </div>
+          <div class="pane-find" id="find-decoded">
+            <input type="search" id="search-decoded" class="find-input" placeholder="搜索…" aria-label="在解码日志里搜索" autocomplete="off" spellcheck="false">
+            <button type="button" id="regex-decoded" class="tool-ico" aria-pressed="false" title="把搜索内容当正则表达式（无效正则立刻提示，不会卡住）" aria-label="正则搜索">.*</button>
+            <button type="button" id="prev-decoded" class="tool-ico" title="上一个命中（Shift+Enter 也可用）" aria-label="上一个命中">↑</button>
+            <button type="button" id="next-decoded" class="tool-ico" title="下一个命中（Enter 也可用）" aria-label="下一个命中">↓</button>
+            <span class="find-hits" id="hits-decoded" aria-live="polite">0/0</span>
+            <button type="button" id="exclude-decoded" class="tool-ico excl-ico" aria-pressed="false" title="文本排除：匹配的行从这个窗口的显示里去掉（不删证据、不改文件，下载始终是完整文件）。条件在「选项」里填；已经填过时点一下 = 停用，再点一下 = 恢复" aria-label="文本排除，停用或启用">排除 <span class="excl-count" id="excludeCount-decoded">0</span></button>
+            <button type="button" id="errorsonly-decoded" class="tool-ico" aria-pressed="false" title="只看错误：级别 [E] 以及未解析的结构化记录" aria-label="只看错误">错误</button>
+            <button type="button" id="menu-decoded" class="tool-ico" aria-expanded="false" title="更多阅读选项：级别/模块过滤、行号、时间戳、重复折叠、换行、复制、全选" aria-label="更多阅读选项">选项</button>
+            <div class="pane-menu" id="panel-decoded" hidden></div>
+          </div>
+        </div>
+        <div class="log-lines" id="lines-decoded" role="region" aria-label="解码日志" tabindex="0"></div>
+        <!-- 窗口底部那一块：常驻说明（为什么没解码）+ 命令输入行。
+             包成一个元素是为了让“底部占多高”一次量准（JS 把实测值写进 --pane-foot-h，
+             正文靠它把高度让出来；否则整个网格行会被撑高，同行那个窗口底下留一块空白）。 -->
+        <div class="pane-foot" id="paneFootDecoded">
+          <div class="pane-why" id="why-decoded" role="note" hidden></div>
+          <!-- 命令输入行就长在解码窗口的最底下：输入与输出同屏。
+               上沿可上下拖动改高度（键盘 ↑/↓ 也能微调），拖到最小收成一个 ▲ 按钮，
+               点它回到默认大小。高度与折叠状态记在本机浏览器里（prefs）。 -->
+          <div class="cmd-dock" id="cmdDock" data-collapsed="0">
+          <button type="button" class="cmd-open" id="cmdOpen" hidden
+                  title="展开命令输入行（展开后上沿还能继续拖动改高度）" aria-label="展开命令输入行">▲</button>
+          <div class="cmd-resize" id="cmdResize" role="separator" aria-orientation="horizontal"
+               tabindex="0" aria-label="拖动改命令输入行高度（↑/↓ 微调；拖到最上收成一个 ▲）"
+               title="上下拖动改高度；拖到最上（或按 ↑）收成一个 ▲ 按钮；双击回到默认高度"></div>
+          <div class="cmd-line">
+            <label class="field" title="文本：把你输入的内容 + 行结束符发出去；HEX：把你输入的十六进制字节原样发出去（不追加任何结束符）">格式
+              <select id="observeCmdMode" aria-label="输入格式">
+                <option value="text">文本</option>
+                <option value="hex">HEX</option>
+              </select>
+            </label>
+            <textarea id="observeCmdInput" class="cmd-input" rows="1" autocomplete="off"
+                      spellcheck="false" aria-label="要发送的命令"
+                      placeholder="输入后回车发送（Shift+回车换行；↑/↓ 取本机历史，文本模式下生效）"></textarea>
+            <label class="field" id="observeEndingField" title="文本模式追加的行结束符。实际发出去的那个结束符会写进 io_events.jsonl（0D / 0A / 0D 0A）">结束符
+              <select id="observeLineEnding" aria-label="行结束符">
+                <option value="cr">CR</option>
+                <option value="lf">LF</option>
+                <option value="crlf">CRLF</option>
+              </select>
+            </label>
+            <button type="button" id="observeCmdSend" class="primary" disabled>发送</button>
+            <span class="cmd-hint" id="observeCmdHint"></span>
+          </div>
+        </div>
+        </div>
+        <div class="pane-notice" id="notice-decoded" role="status" aria-live="polite" hidden></div>
+        <button type="button" class="pending-pill" id="pending-decoded" hidden>
+          ▼ 新内容 <span id="pendingCount-decoded" aria-live="polite">0</span> 行
+        </button>
+      </section>
+      <section class="log-pane" id="pane-events" data-source="events">
+        <div class="pane-head">
+          <div class="pane-row">
+            <span class="pane-title" title="结构化事件：一行一条，带 decoded.log 字节偏移">结构化事件</span>
+            <span class="pane-file">app_events.jsonl</span>
+            <button type="button" id="fold-events" class="fold-ico" aria-expanded="true" aria-controls="find-events" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
+            <button type="button" id="full-events" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
+            <div class="pane-tools">
+              <button type="button" id="pause-events" data-action="pause" aria-pressed="false">暂停</button>
+              <button type="button" id="tail-events" data-action="tail" title="补齐暂停期间到达的内容并跳到这个窗口的最新一行（Alt+L 作用于最近操作过的窗口）">跳尾</button>
+              <button type="button" id="older-events" class="pane-mini" hidden title="向前加载更早的一段字节（这份证据超过内联阈值、只装了尾部一段时才出现）">向前加载</button>
+              <a id="download-events" class="pane-link" download>下载</a>
+              <span class="pane-stat" id="stat-events">0 行</span>
+            </div>
+          </div>
+          <div class="pane-find" id="find-events">
+            <input type="search" id="search-events" class="find-input" placeholder="搜索…" aria-label="在结构化事件里搜索" autocomplete="off" spellcheck="false">
+            <button type="button" id="regex-events" class="tool-ico" aria-pressed="false" title="把搜索内容当正则表达式（无效正则立刻提示，不会卡住）" aria-label="正则搜索">.*</button>
+            <button type="button" id="prev-events" class="tool-ico" title="上一个命中（Shift+Enter 也可用）" aria-label="上一个命中">↑</button>
+            <button type="button" id="next-events" class="tool-ico" title="下一个命中（Enter 也可用）" aria-label="下一个命中">↓</button>
+            <span class="find-hits" id="hits-events" aria-live="polite">0/0</span>
+            <button type="button" id="exclude-events" class="tool-ico excl-ico" aria-pressed="false" title="文本排除：匹配的行从这个窗口的显示里去掉（不删证据、不改文件，下载始终是完整文件）。条件在「选项」里填；已经填过时点一下 = 停用，再点一下 = 恢复" aria-label="文本排除，停用或启用">排除 <span class="excl-count" id="excludeCount-events">0</span></button>
+            <button type="button" id="errorsonly-events" class="tool-ico" aria-pressed="false" title="只看错误：级别 [E] 以及未解析的结构化记录" aria-label="只看错误">错误</button>
+            <button type="button" id="menu-events" class="tool-ico" aria-expanded="false" title="更多阅读选项：级别/模块过滤、行号、时间戳、重复折叠、换行、复制、全选" aria-label="更多阅读选项">选项</button>
+            <div class="pane-menu" id="panel-events" hidden></div>
+          </div>
+        </div>
+        <div class="log-lines" id="lines-events" role="region" aria-label="结构化事件日志" tabindex="0"></div>
+        <div class="pane-notice" id="notice-events" role="status" aria-live="polite" hidden></div>
+        <button type="button" class="pending-pill" id="pending-events" hidden>
+          ▼ 新内容 <span id="pendingCount-events" aria-live="polite">0</span> 行
+        </button>
+      </section>
+      <div class="split-bar" id="splitBar" data-pair="0" role="separator" aria-orientation="vertical" tabindex="0" aria-label="第一根分隔条：拖动改宽度，左右箭头键微调，双击让展开的窗口均分" title="拖动改宽度（←/→ 微调）；双击让展开的窗口均分横向空间" hidden></div>
+      <div class="split-bar" id="splitBar2" data-pair="1" role="separator" aria-orientation="vertical" tabindex="0" aria-label="第二根分隔条：拖动改宽度，左右箭头键微调，双击让展开的窗口均分" title="拖动改宽度（←/→ 微调）；双击让展开的窗口均分横向空间" hidden></div>
+      <div class="split-bar" id="splitBar3" data-pair="2" role="separator" aria-orientation="vertical" tabindex="0" aria-label="第三根分隔条：拖动改宽度，左右箭头键微调，双击让展开的窗口均分" title="拖动改宽度（←/→ 微调）；双击让展开的窗口均分横向空间" hidden></div>
+      <!-- ⚠️ 分隔条要**每两个相邻窗口一根**：现在是 5 个窗口 ⇒ 4 根。
+           少一根的后果不是报错，而是最后一对窗口之间拖不动、也没法把宽度让给倒数第二个
+           （`applyRowLayout` 按 `data-pair` 取 `expanded[pair]` / `[pair+1]`）。 -->
+      <div class="split-bar" id="splitBar4" data-pair="3" role="separator" aria-orientation="vertical" tabindex="0" aria-label="第四根分隔条：拖动改宽度，左右箭头键微调，双击让展开的窗口均分" title="拖动改宽度（←/→ 微调）；双击让展开的窗口均分横向空间" hidden></div>
+    </div>
+    <button type="button" id="toTop" class="float-top" hidden title="回到页面顶部（运行控制与板卡状态都在那里）" aria-label="回到页面顶部">↑ 回到顶部</button>
+    <div class="ws-foot">
+      <div id="panicCard" class="panic-host"></div>
+    </div>
+  </section>
+  <section class="panel pane wide">
+    <h2>指标趋势 <span class="hint">metrics.jsonl · 横轴是设备 uptime（重启处会断开）· 每窗自带时间窗与纵轴刻度</span></h2>
+    <div class="chart-head">
+      <div class="chart-note" id="metricsNote"><span class="muted">尚未运行</span></div>
+      <div class="links" id="metricsLinks"></div>
+    </div>
+    <div class="metric-panes" id="metricPanes">
+      <section class="metric-pane" id="metricPane-0">
+        <div class="metric-pane-head">
+          <span class="metric-pane-no">窗格一</span>
+          <select class="metric-pick" id="metricPick-0" data-pane="0" aria-label="左窗格显示哪个指标"></select>
+          <select class="metric-window" id="metricWindow-0" data-pane="0" aria-label="左窗格的时间窗"></select>
+          <select class="metric-scale" id="metricScale-0" data-pane="0" aria-label="左窗格的纵轴刻度"></select>
+        </div>
+        <div class="metric-pane-body" id="metricBody-0"></div>
+      </section>
+      <section class="metric-pane" id="metricPane-1">
+        <div class="metric-pane-head">
+          <span class="metric-pane-no">窗格二</span>
+          <select class="metric-pick" id="metricPick-1" data-pane="1" aria-label="右窗格显示哪个指标"></select>
+          <select class="metric-window" id="metricWindow-1" data-pane="1" aria-label="右窗格的时间窗"></select>
+          <select class="metric-scale" id="metricScale-1" data-pane="1" aria-label="右窗格的纵轴刻度"></select>
+        </div>
+        <div class="metric-pane-body" id="metricBody-1"></div>
+      </section>
+    </div>
+  </section>
+  <section class="panel pane">
+    <h2>断言 <span class="hint">report.json</span></h2>
+    <div id="paneAssert" class="asserts"><p class="muted">尚未运行</p></div>
+  </section>
+  <section class="panel pane" id="testResultsPanel" hidden>
+    <h2>嵌入式测试 <span class="hint" id="testSummary">report.json</span></h2>
+    <table class="test-results"><thead><tr><th>用例</th><th>结果</th><th>耗时</th><th>原因</th></tr></thead>
+      <tbody id="testResultRows"></tbody></table>
+  </section>
+</main>
+
+<!-- RUNTIME_MODES §12（模式化历史列表）：三种模式共用**同一套**列表组件（标题 + 列 + 行 +
+     点击），但数据源、字段和证据语义分开 —— 自动验证看 `runs/`（历史运行），实时观察与离线诊断
+     看观察会话清单（历史观察 / 诊断会话）。标题、提示、列名与行都由 JS 按当前模式重画。 -->
+<section class="panel history" id="historyPanel">
+  <h2><span id="historyTitle">历史运行</span> <span class="hint" id="historyHint">runs/ 只追加，历史证据不会被覆盖；最多一次看十行，里面自己滚</span></h2>
+  <div class="runs-scroll" id="runsScroll">
+    <table id="runsTable">
+      <thead id="runsHead">
+        <tr>
+          <th>run</th><th>结果</th><th>目标</th><th>发起者</th><th>耗时</th><th>开始时间（北京时间）</th><th>证据</th>
+        </tr>
+      </thead>
+      <tbody id="runsBody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<footer class="footer" id="footer"></footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
