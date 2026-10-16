@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -87,11 +88,20 @@ class EchoPort(FakePort):
 class EchoTransport(fixtures.FakeTransport):
     """假串口 + 假枚举：`/api/sniff`、连接与终端收发都走这一份。"""
 
+    #: 每个口“问一次”要等多久（秒）。真机上一个口本来就要等几秒（`IdentityProbe.wait_s`），
+    #: 而假传输是瞬时的 ⇒ 那一轮在毫秒里就结束了，页面上的**逐口进度**根本没机会被看到。
+    #: 给它一个可观察的时长，让“正在嗅探 <口> · n/N”这件事在真浏览器里量得出来。
+    per_port_seconds = 0.6
+
     def port_factory(self, name: str, baud: int) -> EchoPort:
         handle = EchoPort(str(name), int(baud), self.answers.get(str(name), b""))
         self.opened.append(str(name))
         self.handles[str(name)] = handle
         return handle
+
+    def exchange(self, name, baud, payload, max_bytes, wait_s) -> bytes:
+        time.sleep(self.per_port_seconds)
+        return super().exchange(name, baud, payload, max_bytes, wait_s)
 
 
 def find_playwright() -> tuple[str, str, str]:

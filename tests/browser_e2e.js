@@ -166,8 +166,28 @@ async function runDesktop(browser) {
   await shot(page, 'desktop-01-idle.png');
 
   // ---- 嗅探
+  // ⚠️ 先装一个**进度记录器**再点：这一轮真跑的时候，页面上的进度行长什么样是
+  //    "做过"与"看起来做过"的唯一区别（录下来，不猜）。
+  await page.evaluate(() => {
+    globalThis.__d10Seen = [];
+    globalThis.__d10Timer = setInterval(() => {
+      const row = document.getElementById('sniffProgress');
+      if (!row || row.hidden) return;
+      const text = String((document.getElementById('sniffProgressText') || {}).textContent || '').trim();
+      const bar = document.getElementById('sniffProgressBar');
+      const last = globalThis.__d10Seen[globalThis.__d10Seen.length - 1];
+      const record = { text: text, bar: bar ? Number(bar.value) : NaN };
+      if (!last || last.text !== record.text || last.bar !== record.bar) {
+        globalThis.__d10Seen.push(record);
+      }
+    }, 100);
+  });
   await page.click('#sniffBtn');
   await page.waitForSelector('#sniffCards .sniff-card', { timeout: 90000 });
+  await page.evaluate(() => {
+    if (globalThis.__d10Timer) clearInterval(globalThis.__d10Timer);
+    globalThis.__d10Timer = 0;
+  });
   const cardCount = await page.locator('#sniffCards .sniff-card').count();
   check('嗅探出卡片（不是 500、不是空表）', cardCount >= 1, String(cardCount));
   const ports = [];
@@ -179,6 +199,159 @@ async function runDesktop(browser) {
   const stateText = String(await page.locator('#sniffCards .sniff-card .sniff-state').first().textContent() || '').trim();
   check('卡片上有身份状态那一行', stateText.length > 0, stateText);
   await shot(page, 'desktop-02-sniffed.png');
+
+  // ---- 需求 §12.3：逐通信口进度那一行
+  //   ① 这一轮真的跑的时候，页面上出现过"正在嗅探 <口> · <已完成>/<总数>"（录下来，不猜）；
+  //   ② 跑完之后它**收起来**（不永久停在"正在嗅探"）；
+  //   ③ 摆一份仿真快照，量文案/进度条/可访问名称/几何（桌面与窄屏）+ reduced-motion；
+  //   ④ 两仓**共用的夹具**逐条对表（离线也能跑的那一半）。
+  const progressSeen = await page.evaluate(() => globalThis.__d10Seen || []);
+  check('嗅探进行中页面出现过进度那一行', progressSeen.length > 0,
+    progressSeen.length ? progressSeen.slice(0, 6).join(' → ') : '（这一轮太快，没录到；见下面那两条确定性判据）');
+  if (progressSeen.length) {
+    const wellFormed = progressSeen.every((row) => /^正在嗅探/.test(row.text) && Number.isFinite(row.bar));
+    const bars = progressSeen.map((row) => row.bar);
+    const monotonic = bars.every((value, index) => index === 0 || value >= bars[index - 1]);
+    check('录到的进度都长得对：文案是"正在嗅探…"、进度条不回退',
+      wellFormed && monotonic, JSON.stringify(progressSeen).slice(0, 200));
+  }
+  check('嗅探跑完之后进度行收了起来（不永久停在"正在嗅探"）',
+    await page.evaluate(() => {
+      const row = document.getElementById('sniffProgress');
+      return Boolean(row) && row.hidden
+        && String((document.getElementById('sniffProgressText') || {}).textContent || '') === '';
+    }),
+    JSON.stringify(await diagnostics(page)).slice(0, 160));
+
+  const progressHtml = await page.evaluate(() => {
+    const host = document.getElementById('sniffProgress');
+    const bar = document.getElementById('sniffProgressBar');
+    return {
+      role: host ? host.getAttribute('role') : null,
+      live: host ? host.getAttribute('aria-live') : null,
+      name: bar ? String(bar.getAttribute('aria-label') || '') : '',
+      tag: bar ? bar.tagName.toLowerCase() : '',
+      max: bar ? Number(bar.max) : 0,
+    };
+  });
+  check('进度那一行是可访问的：原生 progress + 名称 + 会读出来的状态区',
+    progressHtml.tag === 'progress' && progressHtml.max === 100
+    && progressHtml.role === 'status' && progressHtml.live === 'polite'
+    && progressHtml.name.length > 0,
+    JSON.stringify(progressHtml));
+
+  const progressPaint = async (viewport) => {
+    if (viewport) await page.setViewportSize(viewport);
+    return page.evaluate(() => {
+      const pw = globalThis.PWLogWorkspace;
+      const saved = pw.observe.sniffBlock();
+      const read = () => {
+        const host = document.getElementById('sniffProgress');
+        const text = document.getElementById('sniffProgressText');
+        const bar = document.getElementById('sniffProgressBar');
+        const panel = document.querySelector('.cp-pick');
+        if (!host || !text || !bar || !panel) return { missing: true };
+        const box = (el) => el.getBoundingClientRect();
+        const rowRect = box(host);
+        const textRect = box(text);
+        const barRect = box(bar);
+        const panelRect = box(panel);
+        return {
+          hidden: host.hidden,
+          text: String(text.textContent || '').trim(),
+          value: Number(bar.value),
+          valueText: String(bar.getAttribute('aria-valuetext') || ''),
+          rowH: Math.round(rowRect.height),
+          barW: Math.round(barRect.width),
+          insidePanel: rowRect.left >= panelRect.left - 1 && rowRect.right <= panelRect.right + 1,
+          textVsBar: textRect.right <= barRect.left + 1 || barRect.right <= textRect.left + 1
+            || textRect.bottom <= barRect.top + 1 || barRect.bottom <= textRect.top + 1,
+          overflowX: Math.round(document.documentElement.scrollWidth - window.innerWidth),
+        };
+      };
+      // 摆两份（第二份的数字更长）：行高不许因此变化。
+      pw.observe.showSniffProgress({
+        progress: {
+          state: 'running', total_ports: 4, completed_ports: 1, current_port: 'PORT-A',
+          percent: 25, started_utc: '', updated_utc: '', reason: '',
+        },
+      }, true);
+      const first = read();
+      pw.observe.showSniffProgress({
+        progress: {
+          state: 'running', total_ports: 4, completed_ports: 3,
+          current_port: 'PORT-A-LONGER-NAME', percent: 75,
+        },
+      }, true);
+      const second = read();
+      pw.observe.showSniffProgress({
+        progress: {
+          state: 'failed', total_ports: 2, completed_ports: 1, current_port: '',
+          percent: 50, reason: 'OSError: 盘满了',
+        },
+      }, false);
+      const failed = read();
+      pw.observe.showSniffProgress(saved, false);   // 收尾：把原来那一块原样放回去
+      return { first, second, failed };
+    });
+  };
+
+  const desktop = await progressPaint();
+  check('桌面：摆上 running 快照后文案/进度条与快照一致',
+    desktop.first.hidden === false && desktop.first.text === '正在嗅探 PORT-A · 1/4'
+    && desktop.first.value === 25 && desktop.first.valueText === desktop.first.text,
+    JSON.stringify(desktop.first));
+  check('桌面：尺寸稳定（换一份更长的数字，行高不变）且不与文字重叠、不横向溢出',
+    desktop.first.rowH === desktop.second.rowH && desktop.first.textVsBar
+    && desktop.first.insidePanel && desktop.first.overflowX <= 0,
+    JSON.stringify({ first: desktop.first, second: desktop.second }));
+  check('失败快照画出可操作的提示（不是停在"正在嗅探"）',
+    desktop.failed.hidden === false && desktop.failed.text.startsWith('嗅探失败：'),
+    JSON.stringify(desktop.failed));
+  await shot(page, 'desktop-02b-progress.png');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const narrow = await progressPaint();
+  check('窄屏 390：进度行在面板内、不与文字重叠、不横向溢出',
+    narrow.first.hidden === false && narrow.first.text === '正在嗅探 PORT-A · 1/4'
+    && narrow.first.insidePanel && narrow.first.textVsBar && narrow.first.overflowX <= 0,
+    JSON.stringify(narrow.first));
+  await shot(page, 'narrow-00-progress.png');
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  // ④ `prefers-reduced-motion: reduce`：转环必须真的停（CSS 里那一条在真浏览器里生效）
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reduced = await page.evaluate(() => {
+    const button = document.getElementById('sniffBtn');
+    const before = button.dataset.state;
+    button.dataset.state = 'busy';
+    const spin = button.querySelector('.sniff-spin');
+    const animation = spin ? getComputedStyle(spin).animationName : '（没有那个转环）';
+    button.dataset.state = before || 'idle';
+    return { animation, matches: window.matchMedia('(prefers-reduced-motion: reduce)').matches };
+  });
+  await page.emulateMedia({ reducedMotion: null });
+  check('reduced-motion 下"正在嗅探"的转环停了',
+    reduced.matches && reduced.animation === 'none', JSON.stringify(reduced));
+
+  // ⑤ 两仓共用的进度协议夹具：页面那一行逐条对表（离线、不碰硬件）
+  const fixtureRows = await page.evaluate((fixture) => {
+    const pw = globalThis.PWLogWorkspace;
+    const wrong = [];
+    for (const row of fixture.page) {
+      const got = pw.observe.sniffProgress(row.sniff, row.busy);
+      if (got.visible !== row.visible || got.text !== row.text || got.kind !== row.kind
+          || got.percent !== row.bar || got.percentDerived !== row.bar) {
+        wrong.push({ why: row.why, got: got, want: row });
+      }
+    }
+    return { total: fixture.page.length, wrong: wrong };
+  }, JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'tools', 'webconsole', 'fixtures', 'sniff_progress.json'), 'utf8')));
+  check('页面那一行与两仓共用的夹具逐条对上',
+    fixtureRows.total > 0 && fixtureRows.wrong.length === 0,
+    fixtureRows.wrong.length ? JSON.stringify(fixtureRows.wrong).slice(0, 240)
+      : `${fixtureRows.total} 条样本（文案 / 可见性 / 进度条值 / 派生百分比）`);
 
   // ---- 零配置那条路：**系统枚举到的通用口**（台架没点名）也要能选、能连
   const genericCard = expectedPort ? await cardByPort(page, expectedPort) : null;

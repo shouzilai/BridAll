@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import socket
 import sys
 import tempfile
@@ -640,6 +641,165 @@ def check_sniff_transport_and_failure_modes() -> None:
         running.close()
 
 
+def check_sniff_progress_and_the_concurrency_gate() -> None:
+    """需求 §12.2：逐通信口进度快照 + 服务端并发闸门（真 HTTP + 真执行器）。
+
+    这一节的每一条都对着"最容易假装做过"的地方：
+
+    | 判据 | 怎么盖的 |
+    | --- | --- |
+    | 进度协议 | 与**两仓共用**的夹具 `fixtures/sniff_progress.json` 对字段、状态与派生百分比 |
+    | 读状态零硬件动作 | 轮询 `/api/state` 期间传输替身的 `probes` / `exchanges` **一条都不涨** |
+    | 并发第二轮 | 第二个 `POST /api/sniff` = **409**，且本轮没有被重开（`started_utc` 一字不变） |
+    | 收口 | 放开闸门后本轮 `completed`、`percent=100`，第一轮照旧 202 + 卡片 |
+    | 页面结构 | 原生 `<progress>` + 可访问名称 + 状态区；行高与进度条宽由 CSS 定死 |
+
+    ⚠️ 页面那一行的**文案/进度条值**由浏览器套件（`tests/browser_e2e.js`）按**同一份夹具**核对
+    —— 这里只钉服务端契约与静态结构（无浏览器的环境也跑）。
+    """
+    print("\n[6] 嗅探进度与并发闸门（需求 §12.2）")
+    fixture = json.loads(
+        (CONSOLE_DIR / "fixtures" / "sniff_progress.json").read_text(encoding="utf-8")
+    )
+    check("进度夹具的字段与状态和 core 一一对应",
+          tuple(fixture["fields"]) == sniff_service.PROGRESS_FIELDS
+          and tuple(fixture["states"]) == sniff_service.SNIFF_STATES,
+          f"{fixture['fields']} / {fixture['states']}")
+    check("percent 只由计数派生（零候选口不除零、超过总数不越 100）",
+          all(sniff_service.derived_percent(row["completed_ports"], row["total_ports"])
+              == row["percent"] for row in fixture["percent"]),
+          json.dumps(fixture["percent"], ensure_ascii=False)[:200])
+    check("快照带的就是夹具声明的那几个字段",
+          sorted(sniff_service.SniffProgress().to_json()) == sorted(fixture["fields"]),
+          str(sorted(sniff_service.SniffProgress().to_json())))
+
+    index_html = (CONSOLE_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8")
+    app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    check("页面上有那一行：原生 progress + 可访问名称 + 状态区",
+          'id="sniffProgress" role="status" aria-live="polite"' in index_html
+          and '<progress id="sniffProgressBar"' in index_html
+          and 'aria-label="设备嗅探进度"' in index_html,
+          "")
+    check("尺寸由 CSS 定死，窄屏占满，且登记进四窗高度预算",
+          re.search(r"\.sniff-progress\s*\{[^}]*min-height:\s*\d+px", style_css) is not None
+          and re.search(r"\.sniff-progress\s+progress\s*\{[^}]*width:\s*\d+px", style_css) is not None
+          and re.search(r"\.sniff-progress progress\s*\{\s*width:\s*100%", style_css) is not None
+          and '"sniffProgress"' in re.search(r"const PANE_GAP_NODES = \[([^\]]*)\]", app_js).group(1),
+          "")
+    check("页面只从状态快照读进度（不读上一轮结果）",
+          "function sniffProgressModel(sniff, busy)" in app_js
+          and "sniff.last" not in app_js.split("function sniffProgressModel(sniff, busy)", 1)[1].split("\n}\n", 1)[0],
+          "")
+
+    work = Path(tempfile.mkdtemp())
+    fake = FakeTransport({PORT_GENERIC: IDENTITY_LINE}, enumerated=(PORT_GENERIC,))
+    assembled = console_server.build_live_assembly(
+        work / "runs", sessions_dir=work / "ses", imports_dir=work / "imp",
+        transport=fake.as_transport(), sniff_dir=work / "sniff",
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    # ⚠️ 计数**只包住嗅探执行器自己的三个注入口**：`/api/state` 里的设备卡那一段
+    #    本来就会探一次口（既有行为，与进度无关）—— 拿传输替身的总计数当判据会把
+    #    “设备卡在读口”错算成“进度在读口”。这里量的就是“进度这条路有没有碰硬件”。
+    sniff_calls = {"access": 0, "conflict": 0, "exchange": 0}
+    real_access = assembled.sniff._access
+    real_conflict = assembled.sniff._conflict
+    real_exchange = assembled.sniff._exchange
+
+    def counted_access(port: str) -> str:
+        sniff_calls["access"] += 1
+        return real_access(port)
+
+    def counted_conflict(port: str) -> str:
+        sniff_calls["conflict"] += 1
+        return real_conflict(port)
+
+    def gated(*args, **kwargs):
+        # 停在这里等闸门：第一轮于是**真的**停在端口里，我们才能在它跑着的时候读状态、
+        # 再打第二次 —— 一个"已经跑完"的轮次证明不了并发闸门。
+        sniff_calls["exchange"] += 1
+        entered.set()
+        release.wait(5)
+        return real_exchange(*args, **kwargs)
+
+    assembled.sniff._access = counted_access
+    assembled.sniff._conflict = counted_conflict
+    assembled.sniff._exchange = gated
+    running = Running(assembled)
+    box: dict = {}
+
+    def first_round() -> None:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{running.port}/api/sniff", data=b"{}", method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with opener.open(request, timeout=30) as response:
+                box["status"] = response.status
+                box["payload"] = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            box["status"] = error.code
+            box["payload"] = json.loads(error.read().decode("utf-8") or "{}")
+        except BaseException as error:  # noqa: BLE001 - 夹具：记下来再判
+            box["error"] = f"{type(error).__name__}: {error}"
+
+    worker = threading.Thread(target=first_round, daemon=True)
+    worker.start()
+    try:
+        check("第一轮真的走进了那个口（正在等回答）", entered.wait(5), str(fake.exchanges))
+        before = dict(sniff_calls)
+        row: dict = {}
+        for _ in range(20):
+            _, state = running.call("GET", "/api/state")
+            row = ((state.get("sniff") or {}).get("progress")) or {}
+            if row.get("state") == "running":
+                break
+            time.sleep(0.02)
+        check("进度是 running 且指着正在问的那个口",
+              row.get("state") == "running" and row.get("current_port") == PORT_GENERIC
+              and row.get("total_ports") == 1 and row.get("completed_ports") == 0
+              and row.get("percent") == 0,
+              json.dumps(row, ensure_ascii=False))
+        check("反复读 /api/state 不产生任何端口动作（进度读的只是内存快照）",
+              sniff_calls == before,
+              f"嗅探自己的调用 {before} → {dict(sniff_calls)}")
+        started = str(row.get("started_utc") or "")
+        status, payload = running.call("POST", "/api/sniff", {})
+        check("并发的第二轮 = 409（code=sniff_busy）",
+              status == 409 and payload.get("code") == "sniff_busy"
+              and "只允许一轮" in str(payload.get("error")),
+              f"{status} {json.dumps(payload, ensure_ascii=False)[:160]}")
+        check("被拒的第二轮没有开第二轮（端口访问没涨）",
+              sniff_calls == before,
+              f"嗅探自己的调用 {before} → {dict(sniff_calls)}")
+        release.set()
+        worker.join(timeout=15)
+        row = {}
+        for _ in range(60):
+            _, state = running.call("GET", "/api/state")
+            row = ((state.get("sniff") or {}).get("progress")) or {}
+            if row.get("state") != "running":
+                break
+            time.sleep(0.05)
+        check("放开闸门后收口成 completed：计数到位、百分比 100、本轮没被重开",
+              row.get("state") == "completed" and row.get("completed_ports") == 1
+              and row.get("percent") == 100 and str(row.get("started_utc") or "") == started,
+              json.dumps(row, ensure_ascii=False))
+        check("第一轮照旧 202 + 卡片（进度收口不影响结论）",
+              box.get("status") == 202
+              and [(card.get("num"), card.get("port"))
+                   for card in ((box.get("payload") or {}).get("sniff") or {}).get("cards") or []]
+              == [(1, PORT_GENERIC)],
+              json.dumps(box, ensure_ascii=False)[:200])
+    finally:
+        release.set()
+        worker.join(timeout=10)
+        running.close()
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -647,13 +807,14 @@ def main() -> int:
     check_live_lifecycle()
     check_serial_settings()
     check_sniff_transport_and_failure_modes()
+    check_sniff_progress_and_the_concurrency_gate()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
         return 1
     print(
-        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 连接生命周期 / "
-        "收发 / 串口参数 / 公共传输实现与失败面）"
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / "
+        "连接生命周期 / 收发 / 串口参数 / 公共传输实现与失败面）"
     )
     return 0
 

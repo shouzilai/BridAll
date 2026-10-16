@@ -3620,7 +3620,7 @@ function paneChromeHeight(pane) {
  * ⚠️ 2026-10-10：阶段卡不再夹在中间了 —— 它成了工作台里的第 5 格（自己就是一个窗口、
  *    自己吸顶、自己在网格里），所以从这张表里**去掉**了 `stageCards`（它已不存在）。
  * 新增这类夹在中间的行要一起登记进来。 */
-const PANE_GAP_NODES = ["sniffCards", "fullSearch", "staleBanner", "liveTestPanel"];
+const PANE_GAP_NODES = ["sniffCards", "sniffProgress", "fullSearch", "staleBanner", "liveTestPanel"];
 
 /* 夹在中间那几行一共多高（纯函数：给一组 `{hidden, height}`）。 */
 function paneChromeGap(parts) {
@@ -4379,6 +4379,70 @@ function setSniffButton(state) {
   }
 }
 
+/* 需求 §12.3：进度快照 → 页面上那一行。
+ *
+ * ⚠️ 四个状态与核心的 `SNIFF_STATES` 一一对应（idle / running / completed / failed）；
+ *    `percent` 用**服务端派生的那个值**（唯一算法在服务端 `derived_percent()`），
+ *    页面不另算一份当事实 —— 这里只把 `percentDerived` 一并给出来，供宿主判据
+ *    钉住"两边算的是同一个数"。
+ * ⚠️ 它只读进度快照，**不读 `last`**：上一轮的完整结果与"本轮走到哪"是两类事实。
+ * ⚠️ 纯函数：喂它一个 `sniff` 块就行（模型回归与浏览器 E2E 都直接驱动它）。 */
+const SNIFF_PROGRESS_STATES = ["idle", "running", "completed", "failed"];
+
+function sniffProgressModel(sniff, busy) {
+  const block = sniff || {};
+  const row = block.progress || null;
+  const state = SNIFF_PROGRESS_STATES.includes(String(row && row.state))
+    ? String(row.state)
+    : "idle";
+  const total = Math.max(0, Number((row && row.total_ports) || 0));
+  const done = Math.min(total, Math.max(0, Number((row && row.completed_ports) || 0)));
+  const port = String((row && row.current_port) || "");
+  const percent = Math.min(100, Math.max(0, Number((row && row.percent) || 0)));
+  const reason = String((row && row.reason) || "");
+  const percentDerived = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  /* 点下去了、但服务端还没把那一轮摆到快照里（轮询 2 s 一拍）⇒ 先说“正在嗅探”，
+   * 否则用户点一下看不到任何反应。⚠️ 这不是自己编进度：它只在**本轮还没有数字**时说一句。 */
+  const waiting = state !== "running" && Boolean(busy);
+  /* 失败要有可操作的提示（不得永久停在“正在嗅探”，也不得默默回到“嗅探”）；
+   * 跑完但那句话里有事（例：结果没能落盘）**照样说出来** —— 不静默降级。 */
+  let text = "";
+  let kind = "";
+  if (state === "failed") {
+    text = reason ? `嗅探失败：${reason}` : "嗅探失败：这一轮没有正常收口";
+    kind = "fail";
+  } else if (state === "completed" && reason) {
+    text = `嗅探完成，但${reason}`;
+    kind = "warn";
+  } else if (state === "running") {
+    text = port ? `正在嗅探 ${port} · ${done}/${total}` : `正在嗅探 · ${done}/${total}`;
+  } else if (waiting) {
+    text = "正在嗅探…";
+  }
+  const visible = state === "failed" || waiting
+    || (state === "running") || (state === "completed" && Boolean(reason));
+  return { state, total, done, port, percent, percentDerived, reason, visible, text, kind };
+}
+
+/* 把模型画到那一行上。⚠️ 尺寸稳定：这一行**只在 hidden 之间切**，不动布局的其他部分
+ *（进度条宽度由 CSS 定死）；文字只改 `textContent`，不动态插节点。 */
+function renderSniffProgress() {
+  const host = $("sniffProgress");
+  if (!host) return;
+  const model = sniffProgressModel(app.sniff, app.sniffBusy);
+  host.hidden = !model.visible;
+  host.dataset.kind = model.kind;
+  const text = $("sniffProgressText");
+  if (text) text.textContent = model.visible ? model.text : "";
+  const bar = $("sniffProgressBar");
+  if (bar) {
+    bar.value = model.percent;
+    /* 读屏器读的是这一句（进度条自己的 value 只是个 0–100 的数字）。 */
+    if (model.visible) bar.setAttribute("aria-valuetext", model.text);
+    else bar.removeAttribute("aria-valuetext");
+  }
+}
+
 /* 这一轮有没有“声明了但当前不存在”的口被跳过（用户口径 2026-10-10：不展示）。
  * 用服务端给的**结构化**字段（`last.skipped`）拼一句短话；完整那句话在证据与 `notes` 里。
  * ⚠️ 不靠解析 prose：那句长说明里有个括号与逗号，从里面抠端口号就是在自找麻烦。 */
@@ -4394,6 +4458,7 @@ async function sniffDevices() {
   app.sniffBusy = true;
   const selectedPortBeforeSniff = app.selectedCard ? String(app.selectedCard.port || "") : "";
   setSniffButton("busy");
+  renderSniffProgress();          // 点下去先把“正在嗅探…”摆上（不等 2 s 轮询）
   const hint = $("sniffHint");
   if (hint) {
     // 用户口径 2026-10-12：进行中**只显示动画**（按钮上那个转环），不摆说明。
@@ -4454,6 +4519,7 @@ async function sniffDevices() {
     setSniffButton("idle");
   } finally {
     app.sniffBusy = false;
+    renderSniffProgress();
     updateButtons();
   }
 }
@@ -10600,6 +10666,8 @@ async function refreshState() {
     // 用户点的 —— 这里绝不许自己去发 `/api/sniff`）。
     app.sniff = state.sniff || null;
     renderSniffCards();
+    // 需求 §12.3：进度只读服务端那份快照（本函数每 2 s 跑一遍，**不发**任何动作）。
+    renderSniffProgress();
     // 采集窗口的生效区间（）：输入框的 min/max 跟着 core 走。
     app.observeLimits = state.observe_limits || {};
     renderRunCatalog(state.web_catalog, Boolean(app.webCatalog));
@@ -11014,6 +11082,8 @@ const HOOK_SURFACE = {
     "observe.combination",
     // 用户口径（2026-10-10）：“不存在的口不展示”那一句短话（端口名单来自服务端）。
     "observe.sniffSkippedLine",
+    // 需求 §12.3：逐通信口的进度那一行（纯函数；模型回归与 E2E 的驱动口）。
+    "observe.sniffProgress",
     // RUNTIME_MODES §12（模式化历史列表）：标题 / 列 / 行 / 状态行都出自这一个纯函数。
     "history.model", "history.columns", "history.title",
     // 用户口径（2026-10-13）：阶段“定位”的坐标换算、中心锚点，以及**这一窗的行号能不能信**。
@@ -11280,6 +11350,20 @@ globalThis.PWLogWorkspace = {
     /* 用户口径（2026-10-10）：“系统里不存在的设备就不要展示”。不存在的口由服务端就不造
      * 卡片（结构化给在 `last.skipped`，完整那句在 `notes`），页面只把端口列出来说一句短话。 */
     sniffSkippedLine,
+    /* 需求 §12.3：进度那一行的**纯函数**（模型回归与浏览器 E2E 直接喂它一个 `sniff`
+     * 块）。⚠️ 它只读 `sniff.progress`，不读 `last` —— 两者是两类事实。 */
+    sniffProgress: sniffProgressModel,
+    /* 当前这一块 `sniff`（只读）。浏览器验收摆完仿真快照之后要**原样放回去** ——
+     * 拿不到原来那一份就只能清成 null，那会让卡片消失到下一次轮询。 */
+    sniffBlock: () => app.sniff,
+    /* 浏览器验收用（与下面那个清选择的口子同一类）：把一份**仿真**的进度快照摆到页面上
+     * —— 不发请求、不碰串口；2 s 轮询会把它冲回服务端的事实（那正是它该有的行为）。
+     * ⚠️ 用例要在**同一次 evaluate** 里摆完就量：中间被轮询插进来就变成另一种现场了。 */
+    showSniffProgress: (block, busy) => {
+      app.sniff = block || null;
+      app.sniffBusy = Boolean(busy);
+      renderSniffProgress();
+    },
     limits: observeLimits,
     identity: observeIdentityLine,
     /* 状态句的档位（用户口径 2026-10-10）：上面这三句各自还有一个 `…Say()` 版本，

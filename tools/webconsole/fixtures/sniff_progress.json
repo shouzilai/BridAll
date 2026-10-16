@@ -1,0 +1,102 @@
+{
+  "schema": "sniff-progress/1",
+  "why": "两仓共用的进度协议夹具（DEVICE-001 / D10）。字段名、状态取值、percent 派生与页面那一行的文案都按它核对：改这里 = 改协议。内部仓库与开源仓库各有一份**同一内容**的副本，两边的套件都读它 —— 协议要是漂了，两个仓库同时红。",
+  "notes": [
+    "端口名一律用中性占位（PORT-A / PORT-B）：本机 COM 号属于台架事实，不进任何仓库。",
+    "percent 只由 completed_ports / total_ports 派生；零候选口 ⇒ 0（不除零）。"
+  ],
+  "states": ["idle", "running", "completed", "failed"],
+  "fields": [
+    "state",
+    "total_ports",
+    "completed_ports",
+    "current_port",
+    "percent",
+    "started_utc",
+    "updated_utc",
+    "reason"
+  ],
+  "percent": [
+    { "why": "零候选口：确定性完成，不除零", "total_ports": 0, "completed_ports": 0, "percent": 0 },
+    { "why": "还没开始", "total_ports": 4, "completed_ports": 0, "percent": 0 },
+    { "why": "四口跑到第一个", "total_ports": 4, "completed_ports": 1, "percent": 25 },
+    { "why": "三个口了", "total_ports": 4, "completed_ports": 3, "percent": 75 },
+    { "why": "四个口全完", "total_ports": 4, "completed_ports": 4, "percent": 100 },
+    { "why": "三分之一：向下取整（不四舍五入，免得先到 100）", "total_ports": 3, "completed_ports": 1, "percent": 33 },
+    { "why": "计数超过总数也不越过 100", "total_ports": 4, "completed_ports": 9, "percent": 100 }
+  ],
+  "page": [
+    {
+      "why": "运行中：口 + 已完成/总数（需求 §12.1 的原话）",
+      "sniff": { "progress": { "state": "running", "total_ports": 4, "completed_ports": 1, "current_port": "PORT-A", "percent": 25 } },
+      "busy": true,
+      "visible": true,
+      "bar": 25,
+      "text": "正在嗅探 PORT-A · 1/4",
+      "kind": ""
+    },
+    {
+      "why": "刚点下去、服务端还没把这一轮摆进快照（轮询 2 s 一拍）",
+      "sniff": { "progress": { "state": "idle", "total_ports": 0, "completed_ports": 0, "current_port": "", "percent": 0 } },
+      "busy": true,
+      "visible": true,
+      "bar": 0,
+      "text": "正在嗅探…",
+      "kind": ""
+    },
+    {
+      "why": "运行中但没有“正在检测的口”（两口之间的那一瞬）",
+      "sniff": { "progress": { "state": "running", "total_ports": 4, "completed_ports": 2, "current_port": "", "percent": 50 } },
+      "busy": true,
+      "visible": true,
+      "bar": 50,
+      "text": "正在嗅探 · 2/4",
+      "kind": ""
+    },
+    {
+      "why": "零候选口的收口：进度行收起（完成由既有“嗅探完成”提示说）",
+      "sniff": { "progress": { "state": "completed", "total_ports": 0, "completed_ports": 0, "current_port": "", "percent": 0 } },
+      "busy": false,
+      "visible": false,
+      "bar": 0,
+      "text": "",
+      "kind": ""
+    },
+    {
+      "why": "失败：原因必须能读到，而且不永久停在“正在嗅探”",
+      "sniff": { "progress": { "state": "failed", "total_ports": 2, "completed_ports": 1, "current_port": "", "percent": 50, "reason": "OSError: 本轮结果没能落盘" } },
+      "busy": false,
+      "visible": true,
+      "bar": 50,
+      "text": "嗅探失败：OSError: 本轮结果没能落盘",
+      "kind": "fail"
+    },
+    {
+      "why": "跑完但有话要说（例：证据没落盘）：不静默降级",
+      "sniff": { "progress": { "state": "completed", "total_ports": 1, "completed_ports": 1, "current_port": "", "percent": 100, "reason": "这一轮结果没能落盘" } },
+      "busy": false,
+      "visible": true,
+      "bar": 100,
+      "text": "嗅探完成，但这一轮结果没能落盘",
+      "kind": "warn"
+    },
+    {
+      "why": "空闲：什么都不说（本行不是常驻噪音）",
+      "sniff": { "progress": { "state": "idle", "total_ports": 0, "completed_ports": 0, "current_port": "", "percent": 0 } },
+      "busy": false,
+      "visible": false,
+      "bar": 0,
+      "text": "",
+      "kind": ""
+    },
+    {
+      "why": "服务端还没给过 sniff 块（旧服务 / 部分宿主）：当空闲看，不编",
+      "sniff": null,
+      "busy": false,
+      "visible": false,
+      "bar": 0,
+      "text": "",
+      "kind": ""
+    }
+  ]
+}

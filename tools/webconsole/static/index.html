@@ -103,6 +103,16 @@
                 title="向本机台架点名的通信口逐条发一次只读身份查询：不烧录、不复位、不清设备数据"><span class="sniff-spin" aria-hidden="true"></span><span id="sniffLabel">嗅探</span></button>
         <span id="sniffHint" class="hint" data-kind="" hidden></span>
       </div>
+      <!-- 需求 §12.3：**逐通信口**的进度就摆在这一格里。
+           ⚠️ 它说的是“**本轮**走到哪”（服务端的进度快照），与下面卡片里那份“上一轮的完整
+              结果”是两类事实 —— 本轮还没完成的卡片不许盖掉上一轮的结果。
+           文本给辅助技术读（role=status + aria-live），原生 <progress> 带可访问名称；
+           尺寸由 CSS 定死（文字长短不许让这整条横区跟着跳）。 -->
+      <div class="sniff-progress" id="sniffProgress" role="status" aria-live="polite" hidden>
+        <span class="sniff-progress-text" id="sniffProgressText"></span>
+        <progress id="sniffProgressBar" max="100" value="0"
+                  aria-label="设备嗅探进度"></progress>
+      </div>
       <!-- 每张卡片一个原生 radio ⇒ “高亮加勾选”用得上浏览器自带的可访问性：方向键切换、
            读屏器报选中状态、Tab 进得去。没嗅探过就什么都不显示 —— 本页绝不自作主张去嗅。
            ⚠️ 卡片只常驻**两层**：`通信口 + 设备名称` 与 `身份状态 + 软件版本`；

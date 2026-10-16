@@ -42,6 +42,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import json
 from pathlib import Path
+import threading
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -74,11 +75,172 @@ MAX_PROBES_PER_PORT = MAX_ATTEMPTS_PER_PORT
 #: 默认重发间隔（秒）。落在 3～5 s 里：太密会把设备的回答挤坏，太稀则一次嗅探要等很久。
 DEFAULT_RETRY_GAP_SECONDS = 4.0
 
+# ==================================== 一轮嗅探的进度（需求 §12.2）
+#: 进度的四个状态 —— **只有这四个**（页面、契约夹具与验收都按它判）。
+SNIFF_IDLE = "idle"
+SNIFF_RUNNING = "running"
+SNIFF_COMPLETED = "completed"
+SNIFF_FAILED = "failed"
+SNIFF_STATES: tuple[str, ...] = (SNIFF_IDLE, SNIFF_RUNNING, SNIFF_COMPLETED, SNIFF_FAILED)
+
+#: 进度快照的字段（名字与顺序都进契约：两个仓库用**同一份夹具**核对它）。
+PROGRESS_FIELDS: tuple[str, ...] = (
+    "state",
+    "total_ports",
+    "completed_ports",
+    "current_port",
+    "percent",
+    "started_utc",
+    "updated_utc",
+    "reason",
+)
+
+
+def derived_percent(completed_ports: int, total_ports: int) -> int:
+    """`percent` **只**由计数派生（零候选口 ⇒ 0，**不除零**）。
+
+    ⚠️ 它是派生值而不是第二份事实：任何地方都不许单独写一个 `percent` 进去 ——
+    两份值一漂，进度条与那句文字就会互相矛盾，而屏幕上没人知道该信哪一个。
+    """
+    total = max(0, int(total_ports))
+    if total <= 0:
+        return 0
+    done = max(0, min(int(completed_ports), total))
+    return int(done * 100 // total)
+
+
+@dataclass(frozen=True)
+class SniffProgress:
+    """一轮嗅探的**进度快照**（不可变；读它的人拿到的是副本，不是一个活对象）。
+
+    ⚠️ 它**不是** `sniff.last`：`last` 是上一轮的**完整**结果，`progress` 是**本轮**走到哪。
+    这是两类事实 —— 本轮还没完成的卡片不许覆盖上一轮的完整结果（需求 §12.1）。
+    """
+
+    state: str = SNIFF_IDLE
+    #: 这一轮有几个候选通信口（计数单位 = 候选口，不是探针次数）。
+    total_ports: int = 0
+    #: 已经形成确定观测的口数（同一个口问几次都只算一个）。
+    completed_ports: int = 0
+    #: 正在检测的那个口；没有正在检测的口时是**空串**（类型在各种状态下都稳定）。
+    current_port: str = ""
+    #: 派生值 `completed_ports / total_ports`（`derived_percent()` 是唯一算法）。
+    percent: int = 0
+    started_utc: str = ""
+    updated_utc: str = ""
+    #: 只有**出了事**才非空：整体失败的原因，或"这轮跑完但有话要说"（例：证据没落盘）。
+    reason: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in PROGRESS_FIELDS}
+
+
+class SniffProgressBoard:
+    """逐通信口的进度（**线程安全**，而且是这一轮进度的**唯一**事实）。
+
+    三条硬规矩（每条都有宿主判据）：
+
+    1. **读只复制内存快照**：`snapshot()` 不枚举、不打开、不读写通信口，也不碰 DTR/RTS
+       —— 页面的 2 秒轮询走的正是这条路（需求 §12.2）。
+    2. **计数只由这一层派生**：`percent` 没有第二份来源；同一个口内部问几条探针都只算一个口，
+       计数只增不减、且封顶在总数上。
+    3. **收口只有一条路**：`complete()` / `fail()` 之外还有 `settle()` 兜底 ——
+       `sniff()` 在 `finally` 里调它，于是**任何**路径都不会把 `running` 留在快照里。
+    """
+
+    def __init__(self, *, clock: Callable[[], str] = utc_now) -> None:
+        self._lock = threading.Lock()
+        self._clock = clock
+        self._row = SniffProgress()
+
+    def snapshot(self) -> SniffProgress:
+        """这一轮的进度**副本**（只碰内存，不碰任何硬件）。"""
+        with self._lock:
+            return self._row
+
+    def begin(self, total_ports: int) -> SniffProgress | None:
+        """`(idle|completed|failed) → running`。**已经在跑 ⇒ 返回 None**。
+
+        ⚠️ 返回 `None` 就是并发闸门：调用方据此拒掉第二轮，而这一判发生在任何端口访问之前。
+        """
+        with self._lock:
+            if self._row.state == SNIFF_RUNNING:
+                return None
+            now = self._clock()
+            self._row = SniffProgress(
+                state=SNIFF_RUNNING,
+                total_ports=max(0, int(total_ports)),
+                completed_ports=0,
+                current_port="",
+                percent=0,
+                started_utc=now,
+                updated_utc=now,
+                reason="",
+            )
+            return self._row
+
+    def entering(self, port: str) -> None:
+        """开始检测这个口：先把**它**显示出来（这时完成数**不动**）。"""
+        with self._lock:
+            self._write(state=SNIFF_RUNNING, current_port=str(port or ""))
+
+    def finished_port(self) -> None:
+        """这个口已经形成确定观测 ⇒ 完成数 +1（**只加一次**，且封顶在总数上）。"""
+        with self._lock:
+            self._write(
+                completed_ports=min(self._row.total_ports, self._row.completed_ports + 1)
+            )
+
+    def complete(self, reason: str = "") -> None:
+        """正常跑完（零候选口也走这条：确定性完成、不除零）。
+
+        `reason` 给"跑完了但有话要说"留位（例：结果没能落盘）—— 那种情况不算失败
+        （卡片与结论仍然有效），但**绝不能静默**：原因必须能从接口与页面上看到。
+        """
+        with self._lock:
+            self._write(state=SNIFF_COMPLETED, current_port="", reason=str(reason or ""))
+
+    def fail(self, reason: str) -> None:
+        """这一轮没跑完：进 `failed`，并把原因留下（页面/证据都要能说清为什么）。"""
+        with self._lock:
+            self._write(state=SNIFF_FAILED, current_port="", reason=str(reason or ""))
+
+    def settle(self) -> None:
+        """**兜底收口**：还停在 `running` 就按失败收口，并如实说"异常路径没给原因"。
+
+        ⚠️ 它存在的唯一理由："不残留 running"不能靠"每条路径都记得收口"这种自觉。
+        """
+        with self._lock:
+            if self._row.state == SNIFF_RUNNING:
+                self._write(
+                    state=SNIFF_FAILED,
+                    current_port="",
+                    reason="这一轮没有正常收口（异常路径没有给出原因）",
+                )
+
+    # ------------------------------------------------------------------ 内部
+    def _write(self, **changes: Any) -> None:
+        """改这份快照（**调用方持锁**）：`percent` 与 `updated_utc` 都在这里派生。"""
+        row = replace(self._row, **changes)
+        self._row = replace(
+            row,
+            percent=derived_percent(row.completed_ports, row.total_ports),
+            updated_utc=self._clock(),
+        )
+
 
 class ExchangeError(Exception):
     """目标层的传输实现打不开/写不出去时抛这个。
 
     ⚠️ core 不猜原因（权限？驱动？半死？）：它只把这句话原样记成 `open_failed` 的理由。
+    """
+
+
+class SniffBusy(RuntimeError):
+    """已经有一轮嗅探在跑（**并发闸门**）：第二轮必须被拒，且**一个字节都不发**。
+
+    ⚠️ 前端那个 `sniffBusy` 只是交互反馈，**不是**资源锁（需求 §12.2）：
+    两个标签页、或者一个直接打接口的客户端都不受它约束 —— 唯一有效的闸门在这里。
     """
 
 
@@ -314,6 +476,9 @@ class SniffExecutor:
         #: 等间隔也**注入**：夹具里不该真的等 4 秒，而"等过多久"要能数出来。
         self._sleep = sleep if callable(sleep) else time.sleep
         self._evidence = evidence
+        #: 这一轮的**逐口进度**（线程安全；读它只复制内存快照）。
+        #: ⚠️ 它与 `last_result` 是两类事实：这里说的是**本轮走到哪**，那里是上一轮的完整结果。
+        self._progress = SniffProgressBoard(clock=self._clock)
         #: 证据计数（夹具用它证明"没有用户动作就没有端口访问"）。
         self.port_opens = 0
         self.bytes_written = 0
@@ -335,7 +500,11 @@ class SniffExecutor:
         return self._probes
 
     def state(self) -> dict[str, Any]:
-        """给 `/api/state` 看的那一块（**不触发任何端口访问**）。"""
+        """给 `/api/state` 看的那一块（**不触发任何端口访问**）。
+
+        ⚠️ `progress` 只复制内存快照：页面每 2 秒读它一次，那一步绝不能探口、不能开口、
+        更不能碰 DTR/RTS（需求 §12.2）。
+        """
         return {
             "schema": sniff.SCHEMA,
             "candidates": self._candidates.to_json(),
@@ -344,6 +513,8 @@ class SniffExecutor:
             "max_probes_per_port": MAX_PROBES_PER_PORT,
             "max_attempts_per_port": MAX_ATTEMPTS_PER_PORT,
             "scan_seq_persistent": sniff.SCAN_SEQ_PERSISTENT,
+            #: 本轮进度（idle/running/completed/failed）—— 与 `last` 分开，互不污染。
+            "progress": self._progress.snapshot().to_json(),
             "last": None if self.last_result is None else self.last_result.to_json(),
             "evidence_dir": (
                 None if self.last_evidence_dir is None else str(self.last_evidence_dir)
@@ -352,20 +523,51 @@ class SniffExecutor:
 
     # ----------------------------------------------------------------- 执行
     def sniff(self) -> sniff.SniffResult:
-        """跑一轮（**显式动作**）：逐个候选口受控查询，落证据，返回结果。"""
+        """跑一轮（**显式动作**）：逐个候选口受控查询，落证据，返回结果。
+
+        ⚠️ **并发闸门在第一行**（需求 §12.2）：已经有一轮在跑时抛 `SniffBusy`，
+        而这一抛发生在**任何端口访问之前** —— 所以第二轮一个字节都不发、也不会多探一次口。
+        `finally` 里的 `settle()` 保证正常、零候选口、异常都退出 `running`。
+        """
+        ports = self._candidates.ports
+        if self._progress.begin(len(ports)) is None:
+            raise SniffBusy(
+                "已经有一轮设备嗅探在进行中：等它结束再点（同一时刻只允许一轮）"
+            )
+        try:
+            return self._run_round(ports)
+        except BaseException as error:
+            # ⚠️ 任何异常都要收口到确定终态，并带上**可诊断的原因**（不残留 running）。
+            self._progress.fail(f"{type(error).__name__}: {error}")
+            raise
+        finally:
+            # 正常结束/已收口 ⇒ 什么都不做；万一还有路径漏了，也绝不留 running。
+            self._progress.settle()
+
+    def _run_round(self, ports: tuple[str, ...]) -> sniff.SniffResult:
+        """一轮的正文（闸门与收口在 `sniff()` 里，这里只管把口一个个问过去）。"""
         started = self._clock()
         self.observations = []
         self.gap_seconds = []
         cards: list[sniff.DeviceCard] = []
         missing: list[str] = []
-        for port in self._candidates.ports:
-            # ⚠️ 一个口把整轮打崩是不可接受的：占用探测、资源闸门、传输实现
-            #    都是**注入进来的别人写的代码**，它抛什么异常都不该让“这一轮没有结果”。
-            #    所以逐个口兜住：崩掉的那个口照样出一张卡片，理由写着崩在哪儿。
+        for port in ports:
+            # ① 开始检测这个口：先把**它**显示出来（完成数这时不动）。
+            self._progress.entering(port)
             try:
-                observation = self._probe_port(port)
-            except Exception as error:  # noqa: BLE001 - 见上：不拿一个口换一整轮
-                observation = self._crashed(port, error)
+                # ⚠️ 一个口把整轮打崩是不可接受的：占用探测、资源闸门、传输实现
+                #    都是**注入进来的别人写的代码**，它抛什么异常都不该让“这一轮没有结果”。
+                #    所以逐个口兜住：崩掉的那个口照样出一张卡片，理由写着崩在哪儿。
+                try:
+                    observation = self._probe_port(port)
+                except Exception as error:  # noqa: BLE001 - 见上：不拿一个口换一整轮
+                    observation = self._crashed(port, error)
+            finally:
+                # ② 这个口已经形成确定观测 ⇒ 完成数 +1。可归类的失败（口不在 / 被占 /
+                #    没回答 / 打不开）与崩溃都算，这就是“逐口隔离”在进度上的样子。
+                #    ⚠️ 放在 finally 里：一个口内部问了几条探针、重试几次，都只算**一个口**，
+                #    而且这条提问路径无论怎么出去都只加一次（不会漏加、更不会重复加）。
+                self._progress.finished_port()
             # ⚠️ 用户口径（2026-10-10）：「系统里不存在的设备就不要展示出来了」。
             #    台架声明里可能留着已经拔掉的口（换机器之后最常见：声明还在、口不在），
             #    它不是“一台设备”—— 摆一张卡片只会让人去点一个点不动的口。
@@ -391,6 +593,7 @@ class SniffExecutor:
             skipped=tuple(missing),
         )
         self.last_result = result
+        evidence_note = ""
         if self._evidence is not None:
             sniff_id = new_sniff_id(started.replace(":", "").replace("-", "")[:15],
                                     self._evidence.root)
@@ -404,15 +607,14 @@ class SniffExecutor:
                 #    500 等于“探测全做完了，只因为没落盘就当没做”，而少掉的那份证据
                 #    会变成一句没人知道的缺失。所以：结论照返，缺失写在脸上。
                 self.last_evidence_dir = None
-                result = replace(
-                    result,
-                    notes=(
-                        *result.notes,
-                        f"这一轮结果没能落盘（{type(error).__name__}: {error}）："
-                        "卡片与结论仍然有效，缺的是这份证据文件",
-                    ),
+                evidence_note = (
+                    f"这一轮结果没能落盘（{type(error).__name__}: {error}）："
+                    "卡片与结论仍然有效，缺的是这份证据文件"
                 )
+                result = replace(result, notes=(*result.notes, evidence_note))
         self.last_result = result
+        # 这一轮**跑完了**：终态是 completed（零候选口也走这条），并按需带上那句"有话要说"。
+        self._progress.complete(reason=evidence_note)
         return result
 
     # ------------------------------------------------------------- 单个口
@@ -731,12 +933,22 @@ class SniffExecutor:
 __all__ = [
     "DEFAULT_MAX_PORTS",
     "MAX_PROBES_PER_PORT",
-    "ExchangeError",
+    "PROGRESS_FIELDS",
+    "SNIFF_COMPLETED",
+    "SNIFF_FAILED",
+    "SNIFF_IDLE",
+    "SNIFF_RUNNING",
+    "SNIFF_STATES",
     "Candidates",
+    "ExchangeError",
+    "SniffBusy",
     "SniffEvidence",
     "SniffExecutor",
+    "SniffProgress",
+    "SniffProgressBoard",
     "candidate_ports",
     "decode_rx",
+    "derived_percent",
     "hex_bytes",
     "identity_from_project",
     "new_sniff_id",

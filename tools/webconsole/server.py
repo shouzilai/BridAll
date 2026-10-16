@@ -763,6 +763,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 #    真到了这一步：仍然是 202 + 结果，缺的那一轮写在 notes 里。
                 try:
                     result = executor.sniff()
+                except sniff_service.SniffBusy as error:
+                    # 并发的第二轮（需求 §12.2）：**确定性 409**。闸门就在 `sniff()` 的第一行
+                    # ⇒ 走到了这里说明**一个字节都没发**、也没有多探一次口。
+                    # 页面那个 `sniffBusy` 只是交互反馈，不是资源锁。
+                    return self._send_error_json(409, str(error), code="sniff_busy")
                 except Exception as error:  # noqa: BLE001 - 不能把一个内部异常变成“断线”
                     print(f"[sniff] 这一轮没能跑完：{type(error).__name__}: {error}",
                           file=sys.stderr)

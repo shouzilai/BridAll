@@ -355,6 +355,31 @@ h1, h2 { margin: 0; font-weight: 600; }
   #sniffBtn[data-state="busy"] .sniff-spin { animation: none; }
 }
 
+/* 需求 §12.3：逐通信口进度那一行。
+   ⚠️ **尺寸稳定**：文字长短、数字位数变化都不许让这一条横区（乃至下面的卡片）跳动 ——
+   所以它常驻同一行高（`min-height`），进度条宽度定死，文字过长只省略、不换行。
+   ⚠️ 它是夹在工作台栏与四窗之间的一行 ⇒ 必须登记进 `PANE_GAP_NODES`（否则四窗预算少算它）。 */
+.sniff-progress {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+  min-width: 0; min-height: 18px;
+  font-size: 12px; color: var(--muted);
+}
+.sniff-progress[hidden] { display: none; }
+.sniff-progress[data-kind="warn"] { color: var(--warn); }
+.sniff-progress[data-kind="fail"] { color: var(--fail); }
+.sniff-progress-text {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono);
+}
+.sniff-progress progress {
+  flex: 0 0 auto; width: 140px; max-width: 100%; height: 8px;
+  accent-color: var(--accent);   /* 原生进度条也用主题色，不自己画一根 */
+}
+@media (max-width: 640px) {
+  /* 窄屏：文字先省略、进度条占满该去的宽度（不横向溢出、也不与卡片重叠）。 */
+  .sniff-progress progress { width: 100%; }
+}
+
 /* 每张卡片是一个原生 radio（`<label><input type=radio>`）⇒ 高亮/勾选/方向键/读屏器
  * 用浏览器自带的，不自己造一套交互。“选中”同时给三种线索：边框、底色、右上角的 ✓
  * —— 只靠颜色的话，色觉不同的用户看不出选中的是哪一个。
