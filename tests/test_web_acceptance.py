@@ -946,8 +946,32 @@ def check_case_surface_and_run_state_follow_the_truth() -> None:
           and app_js.count("setProperty(READING_HEIGHT_VAR") == 1,
           "多行：只对齐顶部（正文高度不动）；单行：写一次高度再按网格底边校正；高度只有一个写入口")
 
-    check("分栏徽标说的是现在真实的形态（不是记忆里的栏数）",
-          'const label = splitOn ? `${split.n} 栏` : "五窗";' in app_js,
+    # ⚠️ 用户口径（2026-10-17）：「阅读位」旁边的「分栏」按钮、它的弹出菜单、栏数徽标全部删掉 ——
+    #    它看上去像能决定“硬件按几个窗口跑”，实际只改页面的排法，留着就是让人误会。
+    #    收/展一个窗口现在只剩两条手势：双击窗口头、把分隔条拖到最窄。
+    index_html = (CONSOLE_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    check("「分栏」按钮与它的菜单已删掉，收/展只剩手势",
+          "splitToggle" not in index_html and "splitPop" not in index_html
+          and "split-count" not in index_html and 'class="split-col' not in index_html
+          and "splitToggle" not in app_js and "splitCount" not in app_js
+          and "function wireSplitMenu(" not in app_js
+          and "function setSplitColumns(" not in app_js
+          # 手势与几何都还在：4 根分隔条、flex 分宽度
+          and index_html.count('class="split-bar"') == 4
+          and "function paneView(" in app_js and "function applyRowLayout(" in app_js,
+          "")
+
+    # ⚠️ 用户实测（2026-10-17）：点「阅读位」四个窗口都对上了；接着把某个窗口收成标签，
+    #    工作区立刻矮回去，而阅读位**没人再对一次** —— 看上去就是“一折叠，阅读位就失效”。
+    check("折叠/展开之后阅读位自动重算（不用点第二遍）",
+          "function reapplyReadingPosition()" in app_js
+          and "if (!app.readingEngaged) return false;" in app_js
+          and "app.readingEngaged = true;" in app_js
+          and "app.readingEngaged = false;" in app_js
+          and "reapplyReadingPosition();" in app_js.split("function applyLayout(store)", 1)[1].split(
+              "\nfunction setFocus", 1)[0]
+          # 还开着时不许先清高度：清了再算中间会闪一帧（实测底边 716→700→716）
+          and "if (!(app && app.readingEngaged)) clearReadingHeight();" in app_js,
           "")
 
     # ⚠️ 用户实测（2026-10-17）：底边对上了，但**每个窗格最底下那一行只剩半行** ——

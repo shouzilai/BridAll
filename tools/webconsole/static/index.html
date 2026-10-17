@@ -313,21 +313,10 @@
     <div class="ws-head">
       <span class="ws-title">统一日志工作台</span>
       <div class="ws-tools">
-        <div class="split-menu" id="splitMenu">
-          <button type="button" id="splitToggle" class="tool-ico" aria-pressed="false" aria-haspopup="true" aria-expanded="false" title="分栏：鼠标移到按钮上选五窗/1～5 栏；拖动分隔条改窗口宽度，拖到最窄会收成一个竖排标签（Esc 回到五窗）" aria-label="分栏：选 1 到 5 栏">分栏 <span class="split-count" id="splitCount">2 栏</span></button>
-          <div class="split-pop" id="splitPop" hidden>
-            <p class="split-pop-title">显示几栏？<span class="muted">（其余窗口收成右侧标签，点一下就能换；临时形态，刷新后回到五窗）</span></p>
-            <div class="split-cols" role="group" aria-label="栏数">
-              <button type="button" class="tool-ico split-col" data-n="0" aria-pressed="false" title="五个窗口全展开（宽屏一行 / 中等 2×2 + 1 / 窄屏纵向）">五窗</button>
-              <button type="button" class="tool-ico split-col" data-n="1" aria-pressed="false" title="只展开一个窗口，其余收成标签">1 栏</button>
-              <button type="button" class="tool-ico split-col" data-n="2" aria-pressed="false" title="展开两个窗口，其余收成标签；中间一根可拖动的分隔条">2 栏</button>
-              <button type="button" class="tool-ico split-col" data-n="3" aria-pressed="false" title="展开三个窗口，其余收成标签；两根可拖动的分隔条">3 栏</button>
-              <button type="button" class="tool-ico split-col" data-n="4" aria-pressed="false" title="展开四个窗口，其余收成标签；三根可拖动的分隔条">4 栏</button>
-              <button type="button" class="tool-ico split-col" data-n="5" aria-pressed="false" title="五个窗口全展开（四根可拖动的分隔条）">5 栏</button>
-            </div>
-            <p class="split-pop-hint">窗口宽度记在本机；拖分隔条只重分相邻两个窗口，←/→ 微调；双击标签恢复等宽</p>
-          </div>
-        </div>
+        <!-- 用户口径（2026-10-17）：「阅读位」旁边的「分栏」按钮与它的弹出菜单已删。
+             它看上去像能决定“硬件按几个窗口跑”，实际只改页面的排法 —— 留着就是让人误会。
+             收/展一个窗口现在只有两条手势：双击窗口头收成竖排标签、双击标签全部展开；
+             宽度靠拖那 4 根分隔条（拖到最窄也收成标签）。 -->
         <!-- 实时收发计数：`TX 348 B | RX 12.6 KiB`（用户口径 2026-10-12：搬到“分栏 N 栏”旁边，
              **只在实时观察那一屏显示** —— 另外两屏没有会话在收数，摆着只会让人多问一句）。
              宽度由 CSS **定死**（等宽数字 + 固定 `width`，不是 `min-width`）：数值从 `0 B`

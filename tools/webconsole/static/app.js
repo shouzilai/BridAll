@@ -1930,32 +1930,9 @@ function updateLogIndicators(store) {
       : `把五个窗口的搜索/筛选行都收起：条件仍然生效，省下的高度分给五份日志（当前已收起 ${foldedCount} 个）。`
         + "也可以逐窗点文件名旁的 ▾，或按 Alt+F 只收当前窗口";
   }
-  // 分栏：按钮上的栏数徽标、栏数按钮的按下态、分隔条与标签条的无障碍值。
-  const splitOn = app.layout.mode === "split";
-  const split = normalizeSplit(app.layout.split);
-  const splitToggle = $("splitToggle");
-  if (splitToggle) {
-    splitToggle.setAttribute("aria-pressed", splitOn ? "true" : "false");
-    splitToggle.title = splitOn
-      ? `${split.n} 栏阅读中（其余窗口在右侧标签里）；点一下或按 Esc 回到五窗`
-      : "分栏：鼠标移到按钮上选五窗/1～5 栏；拖分隔条改宽度，拖到最窄会收成标签";
-  }
-  const splitCount = $("splitCount");
-  if (splitCount) {
-    /* ⚠️ 用户实测（2026-10-17）：点了「五窗」回到网格之后，徽标还写着「1 栏」—— 它读的是
-     * 记忆里的 `split.n`，而不是**现在**的形态（屏幕上是五窗、按钮说 1 栏）。
-     * 徽标只说事实：正在分栏才报栏数，否则就是「五窗」。 */
-    const label = splitOn ? `${split.n} 栏` : "五窗";
-    if (splitCount.textContent !== label) splitCount.textContent = label;
-  }
-  document.querySelectorAll(".split-col").forEach((button) => {
-    const want = Number(button.dataset.n) || 0;
-    const active = want === 0 ? !splitOn : (splitOn && split.n === want);
-    const pressed = active ? "true" : "false";
-    if (button.getAttribute("aria-pressed") !== pressed) button.setAttribute("aria-pressed", pressed);
-    button.classList.toggle("on", active);
-  });
   // 标签条：能点、能 Tab 到、按 Enter 展开；标题里说清楚单击/双击各做什么。
+  // ⚠️ 用户口径（2026-10-17）：「分栏」按钮与它的菜单已删 —— 展开几个只靠双击工具条收/展、
+  //    拖分隔条改宽度（拖到最窄收成标签）、双击标签全部展开。这里不再回写任何分栏徽标。
   for (const id of SOURCE_IDS) {
     const source = store.sources[id];
     if (!source || !source.pane) continue;
@@ -2992,8 +2969,11 @@ function applyLayout(store) {
   if (!grid) return;
   const layout = app.layout;
   const view = paneView(layout, isRowLayout());
-  // 收/展窗格、改分栏都改变“当前窗格是谁、它顶边在哪” ⇒ 阅读位那次的高度作废。
-  clearReadingHeight();
+  // 收/展窗格、全屏都改变“当前窗格是谁、它顶边在哪” ⇒ 阅读位那次的高度作废。
+  // ⚠️ 但**阅读位还开着**时不要在这里清：`alignReadingPosition()` 本来就会先清再重算，
+  //    而它是在下一帧跑的 —— 中间这一帧把高度清掉，屏幕上就是“先缩回去、再伸回来”的抽动
+  //    （实测：轮询每轮都会走一次 applyLayout，那一帧能看见底边从 716 掉到 700）。
+  if (!(app && app.readingEngaged)) clearReadingHeight();
 
   /* ⚠️ 顺序很重要：**先把所有滚动位置读出来**，再改布局。
    * 改 `data-mode` / `data-shown` 会让浏览器重排，隐藏的窗口 scrollTop 会被归零
@@ -3024,6 +3004,10 @@ function applyLayout(store) {
       source.el.scrollTop + source.el.clientHeight >= source.el.scrollHeight - 8);
     restoreRange(source);
   }
+  /* ⚠️ 用户实测（2026-10-17）：点了阅读位、窗口都对上了；接着把一个窗口收成标签，
+   * 工作区立刻矮回去（旧高度按新布局作废是对的），但**那之后就没人再对了** ——
+   * 看上去就是“一折叠，阅读位就失效”。所以布局一变就按新布局重新对一次。 */
+  reapplyReadingPosition();
 }
 
 function setFocus(store, id) {
@@ -3105,49 +3089,6 @@ function saveWorkspacePrefs() {
     touched: [...layoutTouched],
   };
   savePrefs();
-}
-
-/* 分栏菜单：鼠标移到按钮上就展开（键盘 Tab 聚焦也展开），选栏数与每栏来源都在里面。
- * 它只是入口：真正的状态在 app.layout.split，`updateLogIndicators` 单向把状态画回来。 */
-function wireSplitMenu(store) {
-  const menu = $("splitMenu");
-  const pop = $("splitPop");
-  const toggle = $("splitToggle");
-  if (!menu || !pop || !toggle) return;
-  let closeTimer = 0;
-  const open = (want) => {
-    if (want) clearTimeout(closeTimer);
-    pop.hidden = !want;
-    toggle.setAttribute("aria-expanded", want ? "true" : "false");
-  };
-  // 鼠标移开时**晚一点**再收：从按钮挪到菜单里要跨过一条缝，收太快会“还没点就没了”。
-  // ⚠️ 这里**不看焦点**：点完栏数按钮后焦点还留在菜单里，一叠加“焦点在里面就不收”
-  // 就会变成鼠标移开也关不掉；键盘场景由 focusout → focusin 把定时器清掉就够了。
-  const scheduleClose = () => {
-    clearTimeout(closeTimer);
-    closeTimer = setTimeout(() => open(false), SPLIT_MENU_CLOSE_MS);
-  };
-  // 键盘用户把焦点留在菜单里时不要收起（鼠标移开的判定不能看焦点）。
-  toggle.addEventListener("click", () => {
-    setSplit(store, { on: app.layout.mode !== "split" });
-    open(true);                    // 刚点过：把栏数/来源留在眼前
-  });
-  menu.addEventListener("mouseenter", () => open(true));
-  menu.addEventListener("mouseleave", scheduleClose);
-  menu.addEventListener("focusin", () => open(true));
-  menu.addEventListener("focusout", scheduleClose);
-  menu.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || pop.hidden) return;
-    event.stopPropagation();       // 只关菜单：不要在 Esc 里把分栏也一起退掉
-    open(false);
-    toggle.focus();
-  });
-  document.addEventListener("click", (event) => {
-    if (!menu.contains(event.target)) open(false);
-  });
-  for (const button of Array.from(document.querySelectorAll(".split-col"))) {
-    button.addEventListener("click", () => setSplitColumns(store, Number(button.dataset.n)));
-  }
 }
 
 /* 分隔条：拖动只在**相邻两个展开窗口**之间重新分配宽度，别的窗口一点不动；
@@ -3390,28 +3331,6 @@ function expandAllPanes(store) {
   app.layout.collapsed = normalizeCollapsed(null);
   app.layout.widths = equalWidths();
   setSplit(store, { on: false });
-  saveWorkspacePrefs();
-}
-
-/* 选栏数：1～5 栏进分栏（其余窗口收成标签）；“五窗”（0）回到默认网格。
- * ⚠️ 必须走 setSplit：栏数只是 split 的一部分，**mode 要由 on 推导出来**
- * （只改 app.layout.split.on 而不管 mode，会变成“点了 4 栏但页面还是五窗”）。 */
-function setSplitColumns(store, n) {
-  markLayoutTouched();                   // 选栏数 = 用户在调整套布局
-  const count = Math.round(Number(n));
-  if (!Number.isFinite(count) || count < SPLIT_MIN_N) {
-    setSplit(store, { on: false });
-    return;
-  }
-  // 展开哪几个：沿用当前展开的一组（不够就按来源顺序补），所以换栏数不会把你刚点过的窗口弄丢。
-  const current = normalizeSplit(app.layout.split);
-  const base = app.layout.mode === "split" ? current.ids : paneView(app.layout, true).expanded;
-  const ids = SOURCE_IDS.filter((id) => base.includes(id)).slice(0, count);
-  for (const id of SOURCE_IDS) {
-    if (ids.length >= count) break;
-    if (!ids.includes(id)) ids.push(id);
-  }
-  setSplit(store, { on: true, n: count, ids });
   saveWorkspacePrefs();
 }
 
@@ -3771,6 +3690,7 @@ function alignReadingPosition() {
   // ③ 屏幕不够高 / 排成了多行：**不做高度调整**（正文压到 240 px 以下就不是“读”了），
   //    只对齐顶部，并把这件事写在提示里 —— 降级可以，悄悄降级不行。
   if (!plan.fit) {
+    app.readingEngaged = false;     // 降级了：别在下次布局变动时自作主张再伸一次
     alignHint(plan.rows > 1
       ? `窗口排成 ${plan.rows} 行，一屏装不下：只把工作台顶部对到浏览器顶部（正文高度不动，往下滚看其余各行）`
       : "屏幕不够高：只把工作台顶部对到浏览器顶部（窗口高度保持原样，正文往下滚看）");
@@ -3806,6 +3726,7 @@ function alignReadingPosition() {
    * 只动 `followTail` 的窗格，用户自己往上滚的不许被拽回去。 */
   settlePaneTails();
   requestAnimationFrame(() => settlePaneTails());
+  app.readingEngaged = true;      // 这一次真的对上了：以后布局一变就自动再对一次
   const kept = Math.abs(window.scrollY - plan.target) <= READING_TOP_TOLERANCE;
   const gap = Math.round(grid.getBoundingClientRect().bottom) - (window.innerHeight - READING_BOTTOM_GAP);
   alignHint(!kept
@@ -3814,6 +3735,18 @@ function alignReadingPosition() {
       ? `已对齐阅读位：工作台顶部在浏览器顶部，窗格底边在浏览器底部（正文 ${plan.body} px）`
       : `已对齐阅读位：工作台顶部在浏览器顶部（正文 ${plan.body} px；底边差 ${gap} px，来自网格自己的内边距）`);
   return plan;
+}
+
+/* 布局变了（收/展窗格、全屏、换屏）之后：如果上一次「阅读位」是**生效的**，就按新布局再对一次。
+ * ⚠️ 用户实测（2026-10-17）：点了阅读位四个窗口都对上了；接着把某个窗口收成标签，工作区立刻矮回去 ——
+ *    旧高度按新布局作废是对的，但**那之后就没人再对**，看上去就是“一折叠，阅读位就失效”。
+ * 用 rAF 推开一帧：调用方（`applyLayout`）正在改 DOM，现在量到的是改到一半的布局。 */
+function reapplyReadingPosition() {
+  if (!app.readingEngaged) return false;
+  requestAnimationFrame(() => {
+    if (app.readingEngaged) alignReadingPosition();
+  });
+  return true;
 }
 
 /* 工作区那一栏里的临时提示：只改按钮的 title（不动布局，不会把四份日志顶下去）。 */
@@ -11767,7 +11700,6 @@ function boot() {
       setAllFindsFolded(store, !allFolded);
     });
   }
-  wireSplitMenu(app.log);
   wirePaneRails(app.log);
   wireSplitBar(app.log);
   wireFloatingControls(app.log);
