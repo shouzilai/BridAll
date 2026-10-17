@@ -3711,6 +3711,36 @@ function paneRowCount() {
   return Math.max(1, tops.size);
 }
 
+/* 布局一改（阅读位写了高度 / 分栏换了 / 视口变了），**本来就在尾部**的窗口要重新贴回尾部。
+ * ⚠️ 用户实测（2026-10-17）：五窗 + 阅读位之后，每个窗格最底下那一行被切掉 9 px ——
+ *    原因不是高度算错，而是高度一变 `scrollTop` 不会自己跟着贴底（实测 maxScroll 567、
+ *    scrollTop 只到 558）：“最新几行在底”变成了“最后一行只剩半行”。
+ * ⚠️ 只动 `followTail` 的窗格：用户自己往上滚着看的，不许被拽回底（那是他在读的东西）。 */
+function settlePaneTails(store = app.log) {
+  const log = store || app.log;
+  if (!log) return 0;
+  let pinned = 0;
+  for (const id of SOURCE_IDS) {
+    const source = log.sources[id];
+    const el = source && source.el;
+    if (!el || !source.followTail) continue;
+    if (el.scrollHeight - el.clientHeight <= 0) continue;
+    const max = el.scrollHeight - el.clientHeight;
+    el.scrollTop = max;
+    /* ⚠️ 贴到底还不够：最后一行可能**比剩下的空间还高**（窄窗格里一句日志折成好几行），
+     * 那样它就只能露出半行。往回退到“整行可见”为止 —— 底部留几像素，胜过切掉半行。 */
+    const kids = el.children;
+    if (kids.length) {
+      const inner = el.getBoundingClientRect().bottom
+        - parseFloat(getComputedStyle(el).paddingBottom || "0");
+      const over = Math.round(kids[kids.length - 1].getBoundingClientRect().bottom - inner);
+      if (over > 0) el.scrollTop = Math.max(0, el.scrollTop - over);
+    }
+    pinned += 1;
+  }
+  return pinned;
+}
+
 function alignReadingPosition() {
   const ws = $("logWorkspace");
   const grid = $("logGrid");
@@ -3770,6 +3800,12 @@ function alignReadingPosition() {
     alignHint("屏幕不够高：只把工作台顶部对到浏览器顶部（窗口高度保持原样，正文往下滚看）");
     return plan;
   }
+  /* ③ 布局变了就要把“跟着尾巴”的窗口重新贴回尾部：高度一变 `scrollTop` 不会自己跟上，
+   * 差几像素就表现成**最底下那一行被切掉一半**（实测 9 px）。
+   * ⚠️ 贴一次不够：改宽度/换分栏之后，换行与滚动条要到下一帧才定下来，所以下一帧**再贴一次**。
+   * 只动 `followTail` 的窗格，用户自己往上滚的不许被拽回去。 */
+  settlePaneTails();
+  requestAnimationFrame(() => settlePaneTails());
   const kept = Math.abs(window.scrollY - plan.target) <= READING_TOP_TOLERANCE;
   const gap = Math.round(grid.getBoundingClientRect().bottom) - (window.innerHeight - READING_BOTTOM_GAP);
   alignHint(!kept

@@ -950,6 +950,17 @@ def check_case_surface_and_run_state_follow_the_truth() -> None:
           'const label = splitOn ? `${split.n} 栏` : "五窗";' in app_js,
           "")
 
+    # ⚠️ 用户实测（2026-10-17）：底边对上了，但**每个窗格最底下那一行只剩半行** ——
+    #    高度一变 `scrollTop` 不会自己跟到底（实测 maxScroll 567、scrollTop 558）。
+    align_body = app_js.split("function alignReadingPosition()", 1)[1].split("\nfunction alignHint", 1)[0]
+    check("阅读位之后把跟在尾部的窗格重新贴到底（最后一行不许只剩半行）",
+          "function settlePaneTails(" in app_js
+          and "if (!el || !source.followTail) continue;" in app_js
+          and "if (over > 0) el.scrollTop = Math.max(0, el.scrollTop - over);" in app_js
+          and "settlePaneTails();" in align_body
+          and "requestAnimationFrame(() => settlePaneTails());" in align_body,
+          "")
+
     # ⚠️ `server` 那一块说的是这台服务（进程 / 工作区锁 / 证据目录），不该跟着选中的链走。
     registry_source = (CONSOLE_DIR / "runner_registry.py").read_text(encoding="utf-8")
     check("状态里的 server 块来自主链（工作区锁不会因为跑过另一条链就消失）",
