@@ -90,6 +90,29 @@ class RunnerRegistry:
                 return runner
         return None
 
+    @staticmethod
+    def _choose_snapshot(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+        """哪一份快照代表“现在”：**在跑的那条链**，否则**最近跑过的那条链**。
+
+        ⚠️ 用户实测（2026-10-17）：以前这里是 `active or snapshots[0]` —— 跑完的那一瞬
+        `busy` 变假，于是状态**立刻跳回第一条注册的链**（ESP32 那一路的空闲快照）。
+        页面上看到的就是：六个阶段永远“等待”、结果行停在开跑前的占位（`INCOMPLETE`）、
+        PASS/FAIL 都没有提示 —— 而那轮 run 其实每一步都通过了（证据在 run 目录里）。
+        刷新页面反而正常（`/api/runs` 从磁盘读），所以这个错法特别难认。
+        判据只有一条：`last_run` 的 `finished_utc`/`started_utc` 谁更新就是谁；
+        谁都没跑过（都为空）时仍退回第一条 —— 与以前的读法一致。
+        """
+        active = next((row for row in snapshots if row.get("busy")), None)
+        if active is not None:
+            return active
+
+        def recency(row: dict[str, Any]) -> str:
+            run = row.get("last_run") or {}
+            return str(run.get("finished_utc") or run.get("started_utc") or "")
+
+        newest = max(snapshots, key=recency)
+        return newest if recency(newest) else snapshots[0]
+
     def start(
         self, firmware_id: str, *, confirm_flash: bool = False, **kwargs: Any
     ) -> dict[str, Any]:
@@ -130,8 +153,7 @@ class RunnerRegistry:
 
     def snapshot(self) -> dict[str, Any]:
         snapshots = [runner.snapshot() for runner in self._runners.values()]
-        active = next((row for row in snapshots if row.get("busy")), None)
-        chosen = active or snapshots[0]
+        chosen = self._choose_snapshot(snapshots)
         result = dict(chosen)
         # ⚠️ 同一个物理设备可以出现在**不止一条链**上（STM32 那块板同时承载裸机与 RT-Thread
         # 两份固件 profile，设备键都是 `stm32a`）。以前这里是"后写覆盖" ⇒ 页面显示的是

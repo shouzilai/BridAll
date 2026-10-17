@@ -4825,6 +4825,22 @@ function projectOptionValues() {
   return values;
 }
 
+/* 这条用例能不能在**自动验证**里启动（纯函数：模型回归与 E2E 直接驱动它）。
+ *
+ * ⚠️ 用户口径（2026-10-17）：自动验证里**不列**那些只能在实时观察跑的用例。
+ * 判据是「宿主用例（`host_scenario`）却没有恰好一个文件参数」：自动验证那一路只实现了
+ * 主机协同的**镜像往返**（要上传一份镜像）；而 `system.identity_verify` 这类零参数、
+ * 复用当前观察连接的用例只能在实时观察屏启动。以前它照样可勾，勾了要等**烧录之后**才在
+ * observe 步报「主机场景必须声明且只声明一个文件参数」。
+ * ⚠️ 与服务端 `web_catalog.autotest_can_run_here()` **同一条判据**（两处都要有：
+ * 绕过页面的调用方也得被拒，而且要在烧录之前就拒）。 */
+function autotestCaseRunsHere(testCase) {
+  const row = testCase || {};
+  if (String(row.kind || "") !== "host_scenario") return true;
+  const specs = Object.values(row.parameters || {});
+  return specs.filter((spec) => spec && String(spec.type || "") === "file").length === 1;
+}
+
 function renderTestCases(facts) {
   const host = $("autotestPicker");
   const body = $("autotestCaseRows");
@@ -4834,7 +4850,10 @@ function renderTestCases(facts) {
   body.dataset.selection = signature;
   body.textContent = "";
   const catalog = facts.project?.test_catalog || {};
-  const cases = (catalog.cases || []).filter((row) => row.suite === facts.suite);
+  // ⚠️ 只在自动验证里能跑的用例（去掉「硬件身份验证」这种只能在实时观察屏启动的）。
+  const cases = (catalog.cases || [])
+    .filter((row) => row.suite === facts.suite)
+    .filter((row) => autotestCaseRunsHere(row));
   const policies = Object.fromEntries((catalog.safety_policies || []).map((row) => [row.id, row]));
   host.hidden = cases.length === 0;
   for (const testCase of cases) {
@@ -10548,6 +10567,15 @@ function updateStepFromEvent(event) {
   renderSteps(app.steps);
 }
 
+/* 把事件游标退回“什么都不知道”并重连：
+ * 服务重启后新总线的序号是小的，而页面手里的是旧的**大**号 —— 不复位就永远接不上。
+ * 从 0 重连就是让服务端给一段**有界积压**（`replay_window`），而不是把整包重发。 */
+function rebaseEventCursor() {
+  app.lastSeq = 0;
+  connectStream();
+  return true;
+}
+
 function connectStream() {
   if (app.source) app.source.close();
   const source = new EventSource(`/api/stream?since=${app.lastSeq}`);
@@ -10620,18 +10648,21 @@ function showStaleBanner(previous, next, reason) {
   host.hidden = false;
 }
 
-/* 每次拿到 `/api/state` 都过一下它：第一次只记基线（不动）。 */
+/* 每次拿到 `/api/state` 都过一下它：第一次只记基线（不动）。
+ * 返回换戳的原因（`"restart"` / `"static"` / `null`）—— 调用方还要用它决定
+ * **要不要复位事件游标**：服务重启后总线序号从头开始，不复位就永远接不上。 */
 function noteBuild(build) {
-  if (!build) return;
+  if (!build) return null;
   const previous = app.build;
   if (!previous) {
     app.build = build;
-    return;
+    return null;
   }
   const reason = buildMoved(previous, build);
-  if (!reason) return;
+  if (!reason) return null;
   showStaleBanner(previous, build, reason);
   app.build = build;      // 只提示一次：再轮询到同一个新戳不该反复弹
+  return reason;
 }
 
 /* -------------------------------------------------------------------- state */
@@ -10670,7 +10701,14 @@ function renderRunProgress(run, steps) {
 async function refreshState() {
   try {
     const state = await getJson("/api/state");
-    noteBuild(state.build);
+    const buildMovedReason = noteBuild(state.build);
+    /* ⚠️ 用户实测（2026-10-17）：服务重启后总线序号**从头开始**，而页面的 `app.lastSeq`
+     * 还停着重启前那个大数 ⇒ `handleEvent()` 里 `event.seq <= app.lastSeq` 把之后**每一条**
+     * 事件都静默丢掉：六个阶段永远“等待”、run 的结果与结束提示都到不了页面
+     * （刷新一下又全对，所以特别难认）。两条判据任一条成立就当换了新总线：
+     * ① 构建戳说进程换了；② 广播水位比我的游标还低（序号回退）。 */
+    const watermarkSeq = Number((state.broadcast || {}).seq) || 0;
+    if (buildMovedReason === "restart" || app.lastSeq > watermarkSeq) rebaseEventCursor();
     // 设备登记要在手上：`updateButtons()` 里判断"实时观察会不会挡住这次 run"要用它
     // （每个目标的 device_key → 那块板的口）。
     app.devices = Array.isArray(state.devices) ? state.devices : [];
@@ -10691,15 +10729,22 @@ async function refreshState() {
     //    浏览器里一连串“为什么没收”就是这个原因。
     applyDecodeRailDefault(state.observe);
     app.running = Boolean(state.busy);
+    /* ⚠️ 用户实测（2026-10-17）：跑完那一刻 `active_run` 变空，于是**结果行与六个阶段都不再刷新** ——
+     * 屏幕上永远停在开跑前的占位（`结果 INCOMPLETE`、六步“等待”），PASS/FAIL 都没有提示。
+     * 服务端 `last_run` 在跑完之后**仍然带着终态**（result/duration/assertion_summary + 六步），
+     * 所以这里一并用它：只要用户没有在回看**另一次** run，就按服务端给的画。
+     * 回看另一次 run 时不许被覆盖（那是他自己选的那一份）。 */
+    const liveRun = state.active_run || state.last_run || null;
+    const reviewingAnother = Boolean(app.viewing && liveRun && app.viewing !== liveRun.run_id);
     if (state.steps && state.steps.length) {
       app.steps = state.steps;
-      if (state.busy || app.viewing === state.last_run?.run_id) renderSteps(app.steps);
+      if (state.busy || !reviewingAnother) renderSteps(app.steps);
     }
-    if (state.active_run) {
-      app.runId = state.active_run.run_id;
-      renderRunMeta(state.active_run);
+    if (liveRun && !reviewingAnother) {
+      app.runId = liveRun.run_id;
+      renderRunMeta(liveRun);
     }
-    renderRunProgress(state.active_run || null, state.steps || []);
+    renderRunProgress(liveRun, state.steps || []);
     // 广播自述（L5）：服务端的序号水位与"因为订阅者跟不上而挤掉"的条数。
     // 落后多少条、有没有我**根本没见过**的事件，都要在状态行里说出来 ——
     // 页面自己看不见的东西，不能靠"看起来正常"蒙过去。

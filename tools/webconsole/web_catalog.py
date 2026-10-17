@@ -18,6 +18,23 @@ except ImportError:
 class CatalogError(ValueError):
     pass
 
+
+def autotest_can_run_here(case: Any) -> bool:
+    """这条用例能不能在**自动验证**里启动（与页面同一条判据）。
+
+    ⚠️ 用户实测（2026-10-17）：`system.identity_verify` 这类**零参数**宿主用例
+    （`kind=host_scenario`）原来在自动验证里也可以勾选，勾了要等**烧录之后**才在
+    observe 步报“主机场景必须声明且只声明一个文件参数”（pipeline 只实现了主机协同的
+    镜像往返那一支：要上传一份镜像）。它其实只能在实时观察屏启动（复用观察连接、只读）。
+    判据：设备自主用例（`device`）照旧；宿主用例必须恰好声明一个 `file` 参数。
+    """
+    if str(getattr(case, "kind", "") or "") != "host_scenario":
+        return True
+    parameters = getattr(case, "parameters", {}) or {}
+    files = [spec for spec in parameters.values() if str(getattr(spec, "kind", "")) == "file"]
+    return len(files) == 1
+
+
 @dataclass(frozen=True)
 class Selection:
     target_id: str
@@ -276,6 +293,14 @@ class WebCatalog:
             try:
                 identity = (str(item.get("case_id", "")), int(item.get("version", 0)))
                 declared = declared_cases.get(identity)
+                if declared is not None and not autotest_can_run_here(declared):
+                    # 用户口径（2026-10-17）：这种用例**不该**出现在自动验证里 —— 在启动前就说清，
+                    # 而不是让用户等到烧录之后才在 observe 步撞上（那时板子已经被动过了）。
+                    raise CatalogError(
+                        f"用例 {identity[0]}@{identity[1]} 只能在实时观察屏启动："
+                        "它是宿主用例、复用当前观察连接（不烧录、不复位），"
+                        "自动验证这一路只跑需要上传镜像的主机协同场景"
+                    )
                 converted = dict(parameters)
                 if declared is not None:
                     for key, spec in declared.parameters.items():
@@ -289,6 +314,10 @@ class WebCatalog:
                     case_id=identity[0], version=identity[1], parameters=converted,
                     confirm_destructive=item.get("confirm_destructive") is True,
                 ))
+            except CatalogError:
+                # ⚠️ `CatalogError` 自己就是 `ValueError` 的子类：不先接住它，
+                # 正面那句话会被下面那条“格式错误”改写成一句难读的套娃。
+                raise
             except (TypeError, ValueError) as error:
                 raise CatalogError(f"测试选择格式错误：{error}") from None
         # ⚠️ 一个测试用例都没提交 ⇒ **没有要准备的东西**：直接返回空。

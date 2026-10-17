@@ -805,6 +805,134 @@ def check_sniff_progress_and_the_concurrency_gate() -> None:
         running.close()
 
 
+def check_case_surface_and_run_state_follow_the_truth() -> None:
+    """用户实测（2026-10-17）的三条：
+
+    ① 自动验证里**不该**列出只能在实时观察屏启动的用例（`system.identity_verify` 那种零参数
+       宿主用例）：勾了它要等**烧录之后**才在 observe 步报“主机场景必须声明且只声明一个文件参数”。
+       现在页面不列、服务端在**启动前**就拒。
+    ② 跑完那一刻 `/api/state` 以前会跳回**第一条注册的链**（空闲快照）⇒ 六个阶段永远“等待”、
+       结果行停在开跑前的占位、PASS/FAIL 都没提示。现在按“在跑 / 最近跑过”的那条链给。
+    ③ 服务重启后总线序号从头开始，页面手里的旧**大**号把之后每一条事件都丢掉 ⇒ 同样静默。
+       现在两条判据（进程换戳 / 水位回退）任一成立就复位游标并重连。
+    """
+    print("\n[7] 用例入口归属 / 状态跟着最近一次 run / 重启后事件流自恢复")
+    from webconsole import runner_registry, web_catalog
+    from webconsole.embedded_test_model import (ParameterSpec, TestCase, TestCatalog)
+    from webconsole.project_package import ProjectPackage
+
+    app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+
+    check("页面不列只能在实时观察跑的用例，且与服务端同一条判据",
+          "function autotestCaseRunsHere(testCase)" in app_js
+          and ".filter((row) => autotestCaseRunsHere(row))" in app_js
+          and "def autotest_can_run_here(case: Any) -> bool:" in
+          (CONSOLE_DIR / "web_catalog.py").read_text(encoding="utf-8"),
+          "")
+
+    device_case = TestCase("demo.device", 1, "设备自主", "smoke", "device", 5.0)
+    session_host = TestCase("system.identity_verify", 1, "硬件身份验证", "smoke",
+                            "host_scenario", 11.0)
+    image_host = TestCase("demo.image", 1, "镜像往返", "smoke", "host_scenario", 60.0,
+                          parameters={"artifact": ParameterSpec("file", required=True)})
+    check("设备用例与带文件参数的主机场景仍然可跑；零参数宿主用例不可跑",
+          web_catalog.autotest_can_run_here(device_case)
+          and web_catalog.autotest_can_run_here(image_host)
+          and not web_catalog.autotest_can_run_here(session_host),
+          "")
+
+    package = ProjectPackage(
+        key="demo", label="（验收自带的合成项目包）", suites=("smoke",),
+        test_catalog=TestCatalog((device_case, session_host), ()),
+    )
+
+    class _Target:
+        target_id = "demo-board"
+        platform = "demo"
+        firmware_label = "演示固件"
+        device_key = "a"
+        pipeline_allowed = True
+        required_protocols = ()
+        absent_protocols = ()
+        first_flash_allowed = False
+        requires_flasher_binding = False
+        capabilities = None
+        suites = ("smoke",)
+        project = "demo"
+
+        def to_json(self) -> dict:
+            return {"target_id": self.target_id, "label": self.target_id, "platform": "demo",
+                    "pipeline_allowed": True, "firmware_ids": []}
+
+    class _Firmware:
+        implemented = True
+        test_regions: tuple = ()
+        target_id = "demo-board"
+        stack = "demo"
+        firmware_id = "demo/default"
+        project = "demo"
+        label = "demo/default"
+        identity_hint = ""
+
+    catalog = web_catalog.WebCatalog((_Target(),), (package,), (_Firmware(),))
+    selection = catalog.selection("demo-board", "demo/default", "smoke")
+    refusal = ""
+    try:
+        catalog.prepare_tests(selection, [{"case_id": "system.identity_verify", "version": 1,
+                                          "parameters": {}, "confirm_destructive": False}])
+    except web_catalog.CatalogError as error:
+        refusal = str(error)
+    check("选它会在启动前被拒（不是烧录之后才报错）",
+          "只能在实时观察屏启动" in refusal and "格式错误" not in refusal, refusal[:80])
+
+    class _Pipeline:
+        def __init__(self, name: str, store, bus) -> None:
+            self.name = name
+            self.store = store
+            self.event_bus = bus
+            self.run: dict | None = None
+
+        def snapshot(self) -> dict:
+            running = bool(self.run and self.run.get("state") == "running")
+            return {"steps": [{"name": "owner", "status": self.name}], "busy": running,
+                    "active_run": self.run if running else None, "last_run": self.run,
+                    "devices": []}
+
+        def active_run_port(self):
+            return {"run_id": self.run["run_id"]} if self.run and self.run.get("state") == "running" else None
+
+    class _Bus:
+        pass
+
+    store = type("S", (), {"runs_dir": Path("runs-shared")})()
+    bus = _Bus()
+    first, second = _Pipeline("first-chain", store, bus), _Pipeline("second-chain", store, bus)
+    registry = runner_registry.RunnerRegistry(
+        (runner_registry.Runner("a/first", first), runner_registry.Runner("b/second", second)),
+        primary="a/first",
+    )
+    chosen = lambda: registry.snapshot()["steps"][0]["status"]  # noqa: E731
+    empty_choice = chosen()
+    second.run = {"run_id": "r-2", "state": "finished", "result": "PASS",
+                  "started_utc": "2026-10-17T02:52:43.000Z",
+                  "finished_utc": "2026-10-17T02:53:20.000Z"}
+    finished_choice = chosen()
+    second.run = {"run_id": "r-2", "state": "running", "result": None,
+                  "started_utc": "2026-10-17T02:52:43.000Z", "finished_utc": None}
+    running_choice = chosen()
+    check("跑完之后状态仍跟着那条链（不跳回第一条的空闲快照）",
+          empty_choice == "first-chain" and finished_choice == "second-chain"
+          and running_choice == "second-chain",
+          f"{empty_choice}/{finished_choice}/{running_choice}")
+
+    check("服务重启后页面自己复位事件游标并重连",
+          "function rebaseEventCursor()" in app_js
+          and 'if (buildMovedReason === "restart" || app.lastSeq > watermarkSeq) rebaseEventCursor();'
+          in app_js
+          and "const liveRun = state.active_run || state.last_run || null;" in app_js,
+          "")
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -813,6 +941,7 @@ def main() -> int:
     check_serial_settings()
     check_sniff_transport_and_failure_modes()
     check_sniff_progress_and_the_concurrency_gate()
+    check_case_surface_and_run_state_follow_the_truth()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
