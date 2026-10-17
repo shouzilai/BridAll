@@ -172,7 +172,9 @@ async function runDesktop(browser) {
     globalThis.__d10Seen = [];
     globalThis.__d10Timer = setInterval(() => {
       const row = document.getElementById('sniffProgress');
-      if (!row || row.hidden) return;
+      // ⚠️ 这一行**常驻占着那一行的高度**（显隐用 visibility）⇒ "看得到"不能再读
+      //    `row.hidden`（它永远是 false），要读计算出来的 visibility。
+      if (!row || getComputedStyle(row).visibility === 'hidden') return;
       const text = String((document.getElementById('sniffProgressText') || {}).textContent || '').trim();
       const bar = document.getElementById('sniffProgressBar');
       const last = globalThis.__d10Seen[globalThis.__d10Seen.length - 1];
@@ -202,24 +204,29 @@ async function runDesktop(browser) {
 
   // ---- 需求 §12.3：逐通信口进度那一行
   //   ① 这一轮真的跑的时候，页面上出现过"正在嗅探 <口> · <已完成>/<总数>"（录下来，不猜）；
-  //   ② 跑完之后它**收起来**（不永久停在"正在嗅探"）；
+  //   ② 跑完之后它不再停在"正在嗅探"：要么收起来，要么写明"嗅探完成 · <数> · <时刻>"
+  //      （用户实测：连点两次看到的东西逐字节相同 ⇒ 看着像"没重新启动"）；
   //   ③ 摆一份仿真快照，量文案/进度条/可访问名称/几何（桌面与窄屏）+ reduced-motion；
   //   ④ 两仓**共用的夹具**逐条对表（离线也能跑的那一半）。
   const progressSeen = await page.evaluate(() => globalThis.__d10Seen || []);
   check('嗅探进行中页面出现过进度那一行', progressSeen.length > 0,
     progressSeen.length ? progressSeen.slice(0, 6).join(' → ') : '（这一轮太快，没录到；见下面那两条确定性判据）');
   if (progressSeen.length) {
-    const wellFormed = progressSeen.every((row) => /^正在嗅探/.test(row.text) && Number.isFinite(row.bar));
+    // 跑的过程中是"正在嗅探…"，跑完那一条是"嗅探完成 · 2/2 · 10:16:35"。
+    const wellFormed = progressSeen.every((row) => /^(正在嗅探|嗅探完成)/.test(row.text)
+      && Number.isFinite(row.bar));
     const bars = progressSeen.map((row) => row.bar);
     const monotonic = bars.every((value, index) => index === 0 || value >= bars[index - 1]);
-    check('录到的进度都长得对：文案是"正在嗅探…"、进度条不回退',
+    check('录到的进度都长得对：文案是"正在嗅探…"或"嗅探完成 · …"、进度条不回退',
       wellFormed && monotonic, JSON.stringify(progressSeen).slice(0, 200));
   }
-  check('嗅探跑完之后进度行收了起来（不永久停在"正在嗅探"）',
+  check('嗅探跑完之后不再停在"正在嗅探"（收起来，或写明"嗅探完成"）',
     await page.evaluate(() => {
       const row = document.getElementById('sniffProgress');
-      return Boolean(row) && row.hidden
-        && String((document.getElementById('sniffProgressText') || {}).textContent || '') === '';
+      const status = String((document.getElementById('sniffProgressText') || {}).textContent || '');
+      if (!row) return false;
+      const visibility = getComputedStyle(row).visibility;
+      return (visibility === 'hidden' || /^嗅探完成/.test(status)) && !/^正在嗅探/.test(status);
     }),
     JSON.stringify(await diagnostics(page)).slice(0, 160));
 
@@ -258,10 +265,12 @@ async function runDesktop(browser) {
         const panelRect = box(panel);
         return {
           hidden: host.hidden,
+          visibility: getComputedStyle(host).visibility,
           text: String(text.textContent || '').trim(),
           value: Number(bar.value),
           valueText: String(bar.getAttribute('aria-valuetext') || ''),
           rowH: Math.round(rowRect.height),
+          gridTop: Math.round(box(document.getElementById('logGrid')).top),
           barW: Math.round(barRect.width),
           insidePanel: rowRect.left >= panelRect.left - 1 && rowRect.right <= panelRect.right + 1,
           textVsBar: textRect.right <= barRect.left + 1 || barRect.right <= textRect.left + 1
@@ -269,6 +278,8 @@ async function runDesktop(browser) {
           overflowX: Math.round(document.documentElement.scrollWidth - window.innerWidth),
         };
       };
+      // 摆仿真快照**之前**的现场：这一行是常驻留出的位置，摆上它不该移动下面任何东西。
+      const baseline = read();
       // 摆两份（第二份的数字更长）：行高不许因此变化。
       pw.observe.showSniffProgress({
         progress: {
@@ -292,28 +303,33 @@ async function runDesktop(browser) {
       }, false);
       const failed = read();
       pw.observe.showSniffProgress(saved, false);   // 收尾：把原来那一块原样放回去
-      return { first, second, failed };
+      return { first, second, failed, baseline };
     });
   };
 
   const desktop = await progressPaint();
   check('桌面：摆上 running 快照后文案/进度条与快照一致',
-    desktop.first.hidden === false && desktop.first.text === '正在嗅探 PORT-A · 1/4'
+    desktop.first.visibility === 'visible' && desktop.first.text === '正在嗅探 PORT-A · 1/4'
     && desktop.first.value === 25 && desktop.first.valueText === desktop.first.text,
     JSON.stringify(desktop.first));
   check('桌面：尺寸稳定（换一份更长的数字，行高不变）且不与文字重叠、不横向溢出',
     desktop.first.rowH === desktop.second.rowH && desktop.first.textVsBar
     && desktop.first.insidePanel && desktop.first.overflowX <= 0,
     JSON.stringify({ first: desktop.first, second: desktop.second }));
+  // 用户实测的"一出现就把页面挤一下"：摆上它，行高与下面四窗的位置都不许变。
+  check('桌面：摆上进度行不会把卡片行与四窗推一下（常驻留出位置）',
+    desktop.first.rowH === desktop.baseline.rowH
+    && desktop.first.gridTop === desktop.baseline.gridTop,
+    JSON.stringify({ baseline: desktop.baseline, first: desktop.first }));
   check('失败快照画出可操作的提示（不是停在"正在嗅探"）',
-    desktop.failed.hidden === false && desktop.failed.text.startsWith('嗅探失败：'),
+    desktop.failed.visibility === 'visible' && desktop.failed.text.startsWith('嗅探失败：'),
     JSON.stringify(desktop.failed));
   await shot(page, 'desktop-02b-progress.png');
 
   await page.setViewportSize({ width: 390, height: 844 });
   const narrow = await progressPaint();
   check('窄屏 390：进度行在面板内、不与文字重叠、不横向溢出',
-    narrow.first.hidden === false && narrow.first.text === '正在嗅探 PORT-A · 1/4'
+    narrow.first.visibility === 'visible' && narrow.first.text === '正在嗅探 PORT-A · 1/4'
     && narrow.first.insidePanel && narrow.first.textVsBar && narrow.first.overflowX <= 0,
     JSON.stringify(narrow.first));
   await shot(page, 'narrow-00-progress.png');
@@ -340,8 +356,10 @@ async function runDesktop(browser) {
     const wrong = [];
     for (const row of fixture.page) {
       const got = pw.observe.sniffProgress(row.sniff, row.busy);
+      // ⚠️ 只比**进度条实际值**（`percent`）：等待新快照时它会被强制归零，
+      //    所以"派生值"不再适合当这一条的判据（派生本身由 Python 侧按夹具钉住）。
       if (got.visible !== row.visible || got.text !== row.text || got.kind !== row.kind
-          || got.percent !== row.bar || got.percentDerived !== row.bar) {
+          || got.percent !== row.bar) {
         wrong.push({ why: row.why, got: got, want: row });
       }
     }

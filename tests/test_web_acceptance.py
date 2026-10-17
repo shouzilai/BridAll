@@ -681,10 +681,15 @@ def check_sniff_progress_and_the_concurrency_gate() -> None:
           and '<progress id="sniffProgressBar"' in index_html
           and 'aria-label="设备嗅探进度"' in index_html,
           "")
-    check("尺寸由 CSS 定死，窄屏占满，且登记进四窗高度预算",
-          re.search(r"\.sniff-progress\s*\{[^}]*min-height:\s*\d+px", style_css) is not None
+    check("尺寸由 CSS 定死、常驻占着那一行的高度，且登记进四窗高度预算",
+          # 用户实测：这一行一出现就把卡片行与四窗整体推一下（高 22 px）⇒ 显隐必须用
+          # `visibility`（不参与 `hidden`/`display`），高度固定、不换行。
+          'style="visibility:hidden"' in index_html
+          and 'host.style.visibility = model.visible ? "visible" : "hidden";' in app_js
+          and ".sniff-progress[hidden]" not in style_css
+          and re.search(r"\.sniff-progress\s*\{[^}]*height:\s*\d+px", style_css) is not None
+          and re.search(r"\.sniff-progress\s*\{[^}]*flex-wrap:\s*nowrap", style_css) is not None
           and re.search(r"\.sniff-progress\s+progress\s*\{[^}]*width:\s*\d+px", style_css) is not None
-          and re.search(r"\.sniff-progress progress\s*\{\s*width:\s*100%", style_css) is not None
           and '"sniffProgress"' in re.search(r"const PANE_GAP_NODES = \[([^\]]*)\]", app_js).group(1),
           "")
     check("页面只从状态快照读进度（不读上一轮结果）",

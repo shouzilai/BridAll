@@ -4418,19 +4418,31 @@ function sniffProgressModel(sniff, busy) {
     text = port ? `正在嗅探 ${port} · ${done}/${total}` : `正在嗅探 · ${done}/${total}`;
   } else if (waiting) {
     text = "正在嗅探…";
+  } else if (state === "completed") {
+    /* 跑完留一条**能看出「哪一次」**的记录：完成数 + 上一次完成时刻（北京时间，与时区无关）。
+     * ⚠️ 用户实测：连点两次嗅探，屏幕与上一轮逐字节相同 ⇒ 「看起来没重新启动」。 */
+    const parts = beijingParts(row && row.updated_utc);
+    text = [`嗅探完成 · ${done}/${total}`, parts ? parts.clock : ""].filter(Boolean).join(" · ");
   }
-  const visible = state === "failed" || waiting
-    || (state === "running") || (state === "completed" && Boolean(reason));
-  return { state, total, done, port, percent, percentDerived, reason, visible, text, kind };
+  /* ⚠️ 等待新快照时**不沿用上一轮的数字**（用户实测：刚跑完 100%，再点时条子仍然满着，
+   * 看着像「已经跑完了 / 没动」）。 */
+  const shownPercent = waiting ? 0 : percent;
+  const visible = state === "failed" || state === "running" || state === "completed" || waiting;
+  return {
+    state, total, done, port, percent: shownPercent, percentDerived,
+    reason, visible, text, kind, waiting,
+  };
 }
 
-/* 把模型画到那一行上。⚠️ 尺寸稳定：这一行**只在 hidden 之间切**，不动布局的其他部分
- *（进度条宽度由 CSS 定死）；文字只改 `textContent`，不动态插节点。 */
+/* 把模型画到那一行上。
+ * ⚠️ 用 `visibility` 而**不是** `hidden`：这一行**常驻占着那一行的高度**（行高由 CSS 定死），
+ *    出现/消失不再把下面的卡片行与四窗整体推一下（用户实测：每次开始嗅探页面跳 22 px）。
+ * ⚠️ 文字只改 `textContent`，不动态插节点，也不改宽度。 */
 function renderSniffProgress() {
   const host = $("sniffProgress");
   if (!host) return;
   const model = sniffProgressModel(app.sniff, app.sniffBusy);
-  host.hidden = !model.visible;
+  host.style.visibility = model.visible ? "visible" : "hidden";
   host.dataset.kind = model.kind;
   const text = $("sniffProgressText");
   if (text) text.textContent = model.visible ? model.text : "";

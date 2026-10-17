@@ -54,12 +54,30 @@
       "kind": ""
     },
     {
-      "why": "零候选口的收口：进度行收起（完成由既有“嗅探完成”提示说）",
-      "sniff": { "progress": { "state": "completed", "total_ports": 0, "completed_ports": 0, "current_port": "", "percent": 0 } },
+      "why": "零候选口的收口：完成数 0/0 照样说出来（不给一句含糊的“完成”）",
+      "sniff": { "progress": { "state": "completed", "total_ports": 0, "completed_ports": 0, "current_port": "", "percent": 0, "updated_utc": "" } },
       "busy": false,
-      "visible": false,
+      "visible": true,
       "bar": 0,
-      "text": "",
+      "text": "嗅探完成 · 0/0",
+      "kind": ""
+    },
+    {
+      "why": "刚跑完又点了一次：条子不许沿用上一轮的 100%（否则看着像“已经跑完了/没动”）",
+      "sniff": { "progress": { "state": "completed", "total_ports": 4, "completed_ports": 4, "current_port": "", "percent": 100, "updated_utc": "2026-10-16T14:56:50.000Z" } },
+      "busy": true,
+      "visible": true,
+      "bar": 0,
+      "text": "正在嗅探…",
+      "kind": ""
+    },
+    {
+      "why": "完成态留一条“哪一次”的记录：完成数 + 上一次完成时刻（北京时间固定 +8，与时区无关）",
+      "sniff": { "progress": { "state": "completed", "total_ports": 4, "completed_ports": 4, "current_port": "", "percent": 100, "updated_utc": "2026-10-16T14:56:50.000Z" } },
+      "busy": false,
+      "visible": true,
+      "bar": 100,
+      "text": "嗅探完成 · 4/4 · 22:56:50",
       "kind": ""
     },
     {

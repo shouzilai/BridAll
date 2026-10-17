@@ -356,28 +356,25 @@ h1, h2 { margin: 0; font-weight: 600; }
 }
 
 /* 需求 §12.3：逐通信口进度那一行。
-   ⚠️ **尺寸稳定**：文字长短、数字位数变化都不许让这一条横区（乃至下面的卡片）跳动 ——
-   所以它常驻同一行高（`min-height`），进度条宽度定死，文字过长只省略、不换行。
+   ⚠️ **常驻占着这一行的高度**：显隐由 JS 切 `visibility`，**不用** `hidden` / `display` ——
+   用户实测：这一行出现/消失会把下面的卡片行与四窗整体推一下（每次开始嗅探跳 22 px）。
+   ⚠️ 高度固定、**不换行**（换行就会改高度）：文字过长只省略，进度条宽度定死。
    ⚠️ 它是夹在工作台栏与四窗之间的一行 ⇒ 必须登记进 `PANE_GAP_NODES`（否则四窗预算少算它）。 */
 .sniff-progress {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
-  min-width: 0; min-height: 18px;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 4px 8px;
+  min-width: 0; height: 19px;
   font-size: 12px; color: var(--muted);
 }
-.sniff-progress[hidden] { display: none; }
 .sniff-progress[data-kind="warn"] { color: var(--warn); }
 .sniff-progress[data-kind="fail"] { color: var(--fail); }
 .sniff-progress-text {
+  flex: 1 1 auto;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--mono);
 }
 .sniff-progress progress {
-  flex: 0 0 auto; width: 140px; max-width: 100%; height: 8px;
+  flex: 0 0 140px; width: 140px; max-width: 100%; height: 8px;
   accent-color: var(--accent);   /* 原生进度条也用主题色，不自己画一根 */
-}
-@media (max-width: 640px) {
-  /* 窄屏：文字先省略、进度条占满该去的宽度（不横向溢出、也不与卡片重叠）。 */
-  .sniff-progress progress { width: 100%; }
 }
 
 /* 每张卡片是一个原生 radio（`<label><input type=radio>`）⇒ 高亮/勾选/方向键/读屏器
