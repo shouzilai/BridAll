@@ -1942,7 +1942,10 @@ function updateLogIndicators(store) {
   }
   const splitCount = $("splitCount");
   if (splitCount) {
-    const label = `${split.n} 栏`;
+    /* ⚠️ 用户实测（2026-10-17）：点了「五窗」回到网格之后，徽标还写着「1 栏」—— 它读的是
+     * 记忆里的 `split.n`，而不是**现在**的形态（屏幕上是五窗、按钮说 1 栏）。
+     * 徽标只说事实：正在分栏才报栏数，否则就是「五窗」。 */
+    const label = splitOn ? `${split.n} 栏` : "五窗";
     if (splitCount.textContent !== label) splitCount.textContent = label;
   }
   document.querySelectorAll(".split-col").forEach((button) => {
@@ -3560,7 +3563,7 @@ function togglePause(id) {
  *   `minBody`    正文的可读下限（再压下去就不是“读”了——退回降级模式）
  */
 function readingPlan({
-  wsTop, paneOffset = 0, paneChrome = 0, innerHeight, maxScroll,
+  wsTop, paneOffset = 0, paneChrome = 0, innerHeight, maxScroll, rows = 1,
   minBody = READING_MIN_BODY, bottomGap = READING_BOTTOM_GAP,
 }) {
   const limit = Math.max(0, Math.round(maxScroll));
@@ -3571,8 +3574,13 @@ function readingPlan({
   const paneTop = paneOffset + (wanted - target);
   const available = Math.round(innerHeight - paneTop - bottomGap);
   const body = Math.round(available - paneChrome);
-  const fit = Number.isFinite(body) && body >= minBody;
-  return { target, topAligned, available, body, fit };
+  /* ⚠️ 用户实测（2026-10-17）：**多行**布局（≤1044 px 的 2×2+1、≤640 px 的单列）下，把一个窗格
+   * 的正文拉到"一屏高"，整块工作区就成了 2～3 屏 —— 一屏里永远只看得到第一行，其余各行
+   * 被压到屏幕外面（提示却还写着"已对齐"）。所以这里只认**一行**：多行一律走③诚实降级
+   * （只对齐顶部，正文高度不动，让页面照常往下滚）。 */
+  const rowCount = Math.max(1, Math.round(Number(rows) || 1));
+  const fit = rowCount === 1 && Number.isFinite(body) && body >= minBody;
+  return { target, topAligned, available, body, fit, rows: rowCount };
 }
 
 /* 正文的可读下限（与 CSS 那条 `max(240px, …)` 同一个数）与窗格底边留的那一点。 */
@@ -3585,6 +3593,13 @@ const READING_HEIGHT_VAR = "--pane-reading-h";
  * 上一次那个 px 数已经不是“这一屏该有多高”，留着就是错误答案。 */
 function clearReadingHeight() {
   document.documentElement.style.removeProperty(READING_HEIGHT_VAR);
+}
+
+/* `--pane-reading-h` 的**唯一**写入口（阅读位算出来的 px 只能从这里进去）。
+ * ⚠️ 校正循环会写不止一次 ⇒ 必须只有一个 `setProperty` 处，不然“高度只有一个写入口”
+ *    这条规矩就静默失效了。 */
+function applyReadingHeight(px) {
+  document.documentElement.style.setProperty(READING_HEIGHT_VAR, `${Math.round(px)}px`);
 }
 
 /* “当前监视窗格”：最近动过的那个（`app.lastPane`）优先，否则第一个看得见的窗口。
@@ -3684,9 +3699,22 @@ function syncPaneFootHeight() {
 /* 对齐之后把顶部再确认一次的余量（px）：窗格高度写下去、页面高度跟着变，顶部可能被推走。 */
 const READING_TOP_TOLERANCE = 2;
 
+/* 这块工作区现在排成几行？（1 = 一行；≤1044 px 的 2×2+1 与 ≤640 px 的单列都 > 1） */
+function paneRowCount() {
+  const grid = $("logGrid");
+  if (!grid) return 1;
+  const tops = new Set();
+  for (const pane of grid.querySelectorAll(".log-pane")) {
+    if (getComputedStyle(pane).display === "none") continue;
+    tops.add(Math.round(pane.getBoundingClientRect().top));
+  }
+  return Math.max(1, tops.size);
+}
+
 function alignReadingPosition() {
   const ws = $("logWorkspace");
-  if (!ws) return;
+  const grid = $("logGrid");
+  if (!ws || !grid) return;
   // 从零算：上一次的调整会改变页面高度，不清掉量到的就是上一版的产物。
   clearReadingHeight();
   // 先重算“工作台栏与四窗之间那几行占掉多少”——用户点这个按钮时，全文件搜索栏/结果列表
@@ -3697,37 +3725,58 @@ function alignReadingPosition() {
   const pane = readingPane();
   const wsTop = Math.round(ws.getBoundingClientRect().top + window.scrollY);
   const paneTop = pane ? Math.round(pane.getBoundingClientRect().top + window.scrollY) : wsTop;
+  // 排成几行很要紧：多行时"把一个窗格拉到一屏高"会把整块工作区变成 2～3 屏（见 readingPlan）。
+  const rows = paneRowCount();
   const plan = readingPlan({
     wsTop,
     paneOffset: paneTop - wsTop,
     paneChrome: pane ? paneChromeHeight(pane) : 0,
     innerHeight: window.innerHeight,
     maxScroll: Math.max(0, pageHeight() - window.innerHeight),
+    rows,
   });
-  const start = window.scrollY;
-  if (Math.abs(plan.target - start) >= 1) {
-    window.scrollTo({ top: plan.target, behavior: "smooth" });
-    // 有些环境（关掉平滑滚动、远程桌面）会直接忽略 smooth 请求：那时老老实实跳过去，
-    // 否则用户点了按钮却什么都没发生。用户自己先滚动了就不插手。
-    setTimeout(() => {
-      if (Math.abs(window.scrollY - start) < 1) window.scrollTo(0, plan.target);
-    }, 180);
-  }
-  // ③ 屏幕不够高：**不做高度调整**（正文压到 240 px 以下就不是“读”了），只对齐顶部，
-  //    并把这件事写在提示里 —— 降级可以，悄悄降级不行。
+  /* ⚠️ 这里的滚动**不用 smooth**：紧接着要拿"网格底边此刻在视口哪里"去校正正文高度，
+   * 平滑滚动会让校正量到动画途中的位置（写下去的高度就跟着错）。这个按钮要的是"到位"。 */
+  if (Math.abs(window.scrollY - plan.target) >= 1) window.scrollTo(0, plan.target);
+  // ③ 屏幕不够高 / 排成了多行：**不做高度调整**（正文压到 240 px 以下就不是“读”了），
+  //    只对齐顶部，并把这件事写在提示里 —— 降级可以，悄悄降级不行。
   if (!plan.fit) {
-    alignHint("屏幕不够高：只把工作台顶部对到浏览器顶部（窗口高度保持原样，正文往下滚看）");
-    return;
+    alignHint(plan.rows > 1
+      ? `窗口排成 ${plan.rows} 行，一屏装不下：只把工作台顶部对到浏览器顶部（正文高度不动，往下滚看其余各行）`
+      : "屏幕不够高：只把工作台顶部对到浏览器顶部（窗口高度保持原样，正文往下滚看）");
+    return plan;
   }
   // ② 动态高度：写进唯一入口 `--pane-reading-h`（CSS 的 `--pane-body-max` 读它）。
-  document.documentElement.style.setProperty(READING_HEIGHT_VAR, `${plan.body}px`);
+  applyReadingHeight(plan.body);
+  /* ⚠️ 写一次不一定正好落在视口底边：行高由**这一行里最高的那个窗格**决定（各窗的窗口头 /
+   * 底栏不一样），网格还自带下内边距。量网格底边与目标的差，按差值修正（最多三次）。
+   * 用户实测（2026-10-17）：5 栏时底边掉出视口 17 px，提示却写着"已对齐"。 */
+  for (let pass = 0; pass < 3; pass += 1) {
+    const over = Math.round(grid.getBoundingClientRect().bottom)
+      - (window.innerHeight - READING_BOTTOM_GAP);
+    if (Math.abs(over) <= 2) break;
+    const next = Math.round(plan.body - over);
+    if (next < READING_MIN_BODY) { plan.fit = false; break; }
+    plan.body = next;
+    applyReadingHeight(plan.body);
+    const pinned = Math.min(plan.target, Math.max(0, pageHeight() - window.innerHeight));
+    if (Math.abs(window.scrollY - pinned) >= 1) window.scrollTo(0, pinned);
+  }
   // 高度一变，页面高度也跟着变：把顶部对齐**再压一次**，并如实说有没有压住。
   const settled = Math.min(plan.target, Math.max(0, pageHeight() - window.innerHeight));
   if (Math.abs(window.scrollY - settled) >= 1) window.scrollTo(0, settled);
+  if (!plan.fit) {
+    clearReadingHeight();     // 框到可读下限以下：老老实实退回"只对齐顶部"
+    alignHint("屏幕不够高：只把工作台顶部对到浏览器顶部（窗口高度保持原样，正文往下滚看）");
+    return plan;
+  }
   const kept = Math.abs(window.scrollY - plan.target) <= READING_TOP_TOLERANCE;
-  alignHint(kept
-    ? `已对齐阅读位：工作台顶部在浏览器顶部，当前窗格底边在浏览器底部（正文 ${plan.body} px）`
-    : "窗格高度已按可视区调好；页面已经到底，工作台顶部只差一点没贴上（再往下没有内容了）");
+  const gap = Math.round(grid.getBoundingClientRect().bottom) - (window.innerHeight - READING_BOTTOM_GAP);
+  alignHint(!kept
+    ? "窗格高度已按可视区调好；页面已经到底，工作台顶部只差一点没贴上（再往下没有内容了）"
+    : Math.abs(gap) <= 2
+      ? `已对齐阅读位：工作台顶部在浏览器顶部，窗格底边在浏览器底部（正文 ${plan.body} px）`
+      : `已对齐阅读位：工作台顶部在浏览器顶部（正文 ${plan.body} px；底边差 ${gap} px，来自网格自己的内边距）`);
   return plan;
 }
 

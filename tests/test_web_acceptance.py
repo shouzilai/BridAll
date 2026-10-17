@@ -932,6 +932,31 @@ def check_case_surface_and_run_state_follow_the_truth() -> None:
           and "const liveRun = state.active_run || state.last_run || null;" in app_js,
           "")
 
+    # ⚠️ 用户实测（2026-10-17）：1～5 窗在窄一点的窗口上会**换行**（≤1044 px 的 2×2+1、
+    #    ≤640 px 的单列），而「阅读位」只按一个窗格算高度 ⇒ 整块工作区变成 2～3 屏、
+    #    第一行以外全被挤到屏幕外，提示却写"已对齐"；单行时底边还会掉出视口 17 px。
+    align = app_js.split("function alignReadingPosition()", 1)[1].split("\nfunction alignHint", 1)[0]
+    check("阅读位按行数决定要不要伸高度，并按网格底边校正",
+          "function paneRowCount()" in app_js
+          and "const rows = paneRowCount();" in app_js
+          and "rows," in align
+          and "grid.getBoundingClientRect().bottom" in align
+          and "for (let pass = 0; pass < 3; pass += 1) {" in app_js
+          and "窗口排成 ${plan.rows} 行，一屏装不下" in app_js
+          and app_js.count("setProperty(READING_HEIGHT_VAR") == 1,
+          "多行：只对齐顶部（正文高度不动）；单行：写一次高度再按网格底边校正；高度只有一个写入口")
+
+    check("分栏徽标说的是现在真实的形态（不是记忆里的栏数）",
+          'const label = splitOn ? `${split.n} 栏` : "五窗";' in app_js,
+          "")
+
+    # ⚠️ `server` 那一块说的是这台服务（进程 / 工作区锁 / 证据目录），不该跟着选中的链走。
+    registry_source = (CONSOLE_DIR / "runner_registry.py").read_text(encoding="utf-8")
+    check("状态里的 server 块来自主链（工作区锁不会因为跑过另一条链就消失）",
+          'result["server"] = dict(snapshots[list(self._runners).index(self.primary_id)].get("server") or {})'
+          in registry_source,
+          "")
+
 
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")

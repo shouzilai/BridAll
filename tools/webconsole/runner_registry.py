@@ -155,6 +155,11 @@ class RunnerRegistry:
         snapshots = [runner.snapshot() for runner in self._runners.values()]
         chosen = self._choose_snapshot(snapshots)
         result = dict(chosen)
+        # ⚠️ `server` 那一块说的是**这台服务**（进程 / 工作区锁 / 证据目录），不是"哪条链"：
+        #    让它跟着选中的链走，会出现"跑过 STM32 之后，工作区锁与项目目录都换成了另一份" ——
+        #    实测后果：页面页脚那句"工作区被 xxx 占着"整条消失（那条链的锁文件在自己的工程
+        #    目录里，本来就没有），浏览器套件的"状态已经到位"判据因此超时。
+        result["server"] = dict(snapshots[list(self._runners).index(self.primary_id)].get("server") or {})
         # ⚠️ 同一个物理设备可以出现在**不止一条链**上（STM32 那块板同时承载裸机与 RT-Thread
         # 两份固件 profile，设备键都是 `stm32a`）。以前这里是"后写覆盖" ⇒ 页面显示的是
         # **最后注册那条链**的卡片：裸机刚跑完 PASS，卡片却还写着 RT-Thread 那条链在服务启动时
