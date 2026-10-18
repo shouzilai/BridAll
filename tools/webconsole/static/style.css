@@ -1664,6 +1664,32 @@ button.danger:hover:not(:disabled) { border-color: #a34b4b; color: #ffd0d0; }
 }
 /* 空行也是证据里的一行，不能塌成 0 高度。 */
 .log-line { min-height: var(--log-line-h); }
+
+/* 原始串口的终端视图（O14B）：按设备字节重放的显示层。
+   ⚠️ 只是**另一种画法**：行模型、筛选、搜索与下载都不受影响；
+   关掉时（默认）这一窗与从前完全一样。 */
+.term-view { display: none; flex-direction: column; flex: 1 1 0px; min-width: 0;
+  min-height: var(--pane-body-min); max-height: var(--pane-body-max); }
+#pane-raw[data-terminal="1"] .term-view { display: flex; }
+#pane-raw[data-terminal="1"] > .log-lines { display: none; }
+.term-lines {
+  flex: 1 1 0px;
+  min-height: 0;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 3px 8px;
+  font-family: var(--log-font-family);
+  font-size: var(--log-font-size);
+  line-height: var(--log-line-h);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--log-text);
+}
+.term-row { min-height: var(--log-line-h); white-space: pre-wrap; }
+/* 光标块：与正文反色（两套主题各自成立，不另立一个颜色）。 */
+.term-cursor { background: var(--log-text); color: var(--log-surface); border-radius: 2px; }
+
 /* 滚轮到顶/到底时的轻微晃动：告诉用户“已经到头了”。
    同时前端会把滚动拦在这一个窗口里 —— 日志到底了不应该把整个页面一起带走。 */
 @keyframes edge-nudge-up { 0% { transform: translateY(0); } 45% { transform: translateY(2px); } 100% { transform: translateY(0); } }

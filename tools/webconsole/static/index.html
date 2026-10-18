@@ -450,6 +450,7 @@
             <button type="button" id="fold-raw" class="fold-ico" aria-expanded="true" aria-controls="find-raw" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
             <button type="button" id="full-raw" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
             <div class="pane-tools">
+              <button type="button" id="terminal-raw" class="tool-ico" aria-pressed="false" title="终端视图：按设备字节重放回车、退格与光标位置（只换显示，不改原始字节与证据）" aria-label="切换终端视图">终端</button>
               <button type="button" id="pause-raw" data-action="pause" aria-pressed="false">暂停</button>
               <button type="button" id="tail-raw" data-action="tail" title="补齐暂停期间到达的内容并跳到这个窗口的最新一行（Alt+L 作用于最近操作过的窗口）">跳尾</button>
               <button type="button" id="older-raw" class="pane-mini" hidden title="向前加载更早的一段字节（这份证据超过内联阈值、只装了尾部一段时才出现）">向前加载</button>
@@ -468,6 +469,9 @@
             <button type="button" id="menu-raw" class="tool-ico" aria-expanded="false" title="更多阅读选项：级别/模块过滤、行号、时间戳、重复折叠、换行、复制、全选" aria-label="更多阅读选项">选项</button>
             <div class="pane-menu" id="panel-raw" hidden></div>
           </div>
+        </div>
+        <div class="term-view" id="term-raw">
+          <div class="term-lines" id="termLines" role="region" aria-label="原始串口的终端视图" tabindex="0"></div>
         </div>
         <div class="log-lines" id="lines-raw" role="region" aria-label="原始串口日志" tabindex="0"></div>
         <div class="pane-notice" id="notice-raw" role="status" aria-live="polite" hidden></div>

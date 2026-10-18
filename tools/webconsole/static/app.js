@@ -10639,6 +10639,8 @@ function applyEvent(event, touched) {
       } else {
         add("raw", feed(store, "raw", event.line, event.ts, { defer, lineNo: event.line_no }));
       }
+      // 终端视图：按服务端给的**原始字节**重放（行视图与证据都没有变，只多一个显示层）。
+      termFeedEvent(event);
       break;
     case "decoded":
       add("decoded", feed(store, "decoded", event.line, event.ts, { defer, lineNo: event.line_no }));
@@ -11321,6 +11323,278 @@ function hookSurfaceGaps(target, spec) {
   return gaps;
 }
 
+/* ---------------------------------------------- 原始串口的终端视图（O14B）
+ * `raw` 事件带着**这一行的原始字节**（服务端 `bytes_hex`）；这里按字节重放：
+ *   `\r` 回行首覆盖、`\n` 换行、`\b` 退一格、`\t` 跳到下一个 8 的倍数；
+ *   已支持的 CSI：`K`（清到行尾）、`2J`/`3J`（清屏）、`H`/`f`（定位）、`A/B/C/D`（移光标）；
+ *   `m`（颜色）、`?25h/l`（光标可见性）等**吞掉不渲染** —— 不宣称完整 ANSI 兼容。
+ * 未知序列不崩：吞掉它，原始字节始终完整地留在 `raw.bin` 与行视图里。
+ * 终端只是**显示层**：行模型、筛选、搜索、下载都不受影响。
+ */
+const TERM_MAX_ROWS = 2000;
+const TERM_MAX_COLS = 400;
+const TERM_TAB = 8;
+
+function createTermState() {
+  return { rows: [[]], row: 0, col: 0, follow: true, partial: new Uint8Array(0), painted: "" };
+}
+
+let TERM_STATE = null;
+
+function termState() {
+  if (!TERM_STATE) TERM_STATE = createTermState();
+  return TERM_STATE;
+}
+
+function termReset() {
+  TERM_STATE = createTermState();
+  renderTerminalNow();
+}
+
+function terminalOn() {
+  const pane = $("pane-raw");
+  return Boolean(pane && pane.dataset.terminal === "1");
+}
+
+function setTerminalView(on) {
+  const pane = $("pane-raw");
+  if (!pane) return;
+  if (on) pane.dataset.terminal = "1";
+  else delete pane.dataset.terminal;
+  const button = $("terminal-raw");
+  if (button) button.setAttribute("aria-pressed", on ? "true" : "false");
+  if (on) renderTerminalNow();
+}
+
+function termRowChars(state, index) {
+  while (state.rows.length <= index) state.rows.push([]);
+  return state.rows[index];
+}
+
+function termWriteChar(state, ch) {
+  const chars = termRowChars(state, state.row);
+  if (state.col > chars.length) {
+    while (chars.length < state.col) chars.push(" ");
+  }
+  if (state.col < TERM_MAX_COLS) {
+    chars[state.col] = ch;
+    state.col += 1;
+  }
+}
+
+function termNewline(state) {
+  state.row += 1;
+  state.col = 0;
+  termRowChars(state, state.row);
+}
+
+function termEraseToEnd(state) {
+  const chars = termRowChars(state, state.row);
+  if (state.col < chars.length) chars.length = state.col;
+}
+
+function termClearScreen(state) {
+  state.rows = [[]];
+  state.row = 0;
+  state.col = 0;
+}
+
+function termCsi(state, params, final) {
+  const parts = String(params || "").replace(/^\?/, "").split(";");
+  const first = Math.max(1, Math.min(200, Number(parts[0] || 1) || 1));
+  if (final === "K") {
+    termEraseToEnd(state);
+    return;
+  }
+  if (final === "J" && (parts[0] === "2" || parts[0] === "3" || parts[0] === "")) {
+    termClearScreen(state);
+    return;
+  }
+  if (final === "H" || final === "f") {
+    const rowNo = Number(parts[0] || 1) || 1;
+    const colNo = Number(parts[1] || 1) || 1;
+    state.row = Math.max(0, Math.min(TERM_MAX_ROWS - 1, rowNo - 1));
+    state.col = Math.max(0, Math.min(TERM_MAX_COLS, colNo - 1));
+    termRowChars(state, state.row);
+    return;
+  }
+  if (final === "A") {
+    state.row = Math.max(0, state.row - first);
+    termRowChars(state, state.row);
+    return;
+  }
+  if (final === "B") {
+    state.row += first;
+    termRowChars(state, state.row);
+    return;
+  }
+  if (final === "C") {
+    state.col = Math.min(TERM_MAX_COLS, state.col + first);
+    return;
+  }
+  if (final === "D") {
+    state.col = Math.max(0, state.col - first);
+    return;
+  }
+  /* 其它（m 颜色、?25 光标、私有序列……）：不渲染、不崩。 */
+}
+
+/* 一段原始字节 → 终端状态。不足一个 UTF-8 字符的尾巴留着等下一段（不画半个字）。 */
+function termApplyBytes(bytes) {
+  const state = termState();
+  const feed = state.partial.length
+    ? new Uint8Array([...state.partial, ...bytes])
+    : bytes;
+  state.partial = new Uint8Array(0);
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let index = 0;
+  while (index < feed.length) {
+    const byte = feed[index];
+    if (byte === 0x1b) {
+      if (index + 1 >= feed.length) {
+        state.partial = feed.slice(index);
+        return;
+      }
+      if (feed[index + 1] === 0x5b) {
+        let at = index + 2;
+        let params = "";
+        while (at < feed.length) {
+          const ch = feed[at];
+          const digit = ch >= 0x30 && ch <= 0x39;
+          if (!digit && ch !== 0x3b && ch !== 0x3f) break;
+          params += String.fromCharCode(ch);
+          at += 1;
+        }
+        if (at >= feed.length) {
+          state.partial = feed.slice(index);
+          return;
+        }
+        termCsi(state, params, String.fromCharCode(feed[at]));
+        index = at + 1;
+        continue;
+      }
+      index += 2;   // 非 CSI 的 ESC 序列：吞掉这两个字节
+      continue;
+    }
+    if (byte === 0x0d) {
+      state.col = 0;
+      index += 1;
+      continue;
+    }
+    if (byte === 0x0a) {
+      termNewline(state);
+      index += 1;
+      continue;
+    }
+    if (byte === 0x08) {
+      if (state.col > 0) state.col -= 1;
+      index += 1;
+      continue;
+    }
+    if (byte === 0x09) {
+      const next = (Math.floor(state.col / TERM_TAB) + 1) * TERM_TAB;
+      while (state.col < next && state.col < TERM_MAX_COLS) termWriteChar(state, " ");
+      index += 1;
+      continue;
+    }
+    if (byte < 0x20 || byte === 0x7f) {
+      index += 1;
+      continue;
+    }
+    const need = byte < 0x80 ? 1
+      : (byte >> 5) === 0x6 ? 2
+        : (byte >> 4) === 0xe ? 3
+          : (byte >> 3) === 0x1e ? 4 : 0;
+    if (!need) {
+      index += 1;
+      continue;
+    }
+    if (index + need > feed.length) {
+      state.partial = feed.slice(index);
+      return;
+    }
+    termWriteChar(state, decoder.decode(feed.slice(index, index + need)));
+    index += need;
+  }
+  if (state.rows.length > TERM_MAX_ROWS) {
+    const drop = state.rows.length - TERM_MAX_ROWS;
+    state.rows.splice(0, drop);
+    state.row = Math.max(0, state.row - drop);
+  }
+}
+
+function termHexBytes(hex) {
+  const text = String(hex || "");
+  const bytes = new Uint8Array(Math.floor(text.length / 2));
+  for (let at = 0; at < bytes.length; at += 1) {
+    bytes[at] = Number.parseInt(text.slice(at * 2, at * 2 + 2), 16) || 0;
+  }
+  return bytes;
+}
+
+function termFeedEvent(event) {
+  if (!terminalOn()) return;
+  const state = termState();
+  const before = state.painted;
+  if (event && event.bytes_hex) {
+    termApplyBytes(termHexBytes(event.bytes_hex));
+  } else {
+    // 旧服务 / 旧录音没有字节：按解码后的这一行 + 换行显示（并在状态行如实说明）。
+    termApplyBytes(new TextEncoder().encode(`${String((event && event.line) || "")}\n`));
+  }
+  renderTerminalNow(before);
+}
+
+function termSnapshotRows(state) {
+  return state.rows.map((chars, index) => {
+    const text = chars.join("");
+    if (index !== state.row) return { before: text, at: "", after: "" };
+    return {
+      before: chars.slice(0, state.col).join(""),
+      at: chars[state.col] || " ",
+      after: chars.slice(state.col + 1).join(""),
+    };
+  });
+}
+
+function renderTerminalNow(previousPainted) {
+  const host = $("termLines");
+  if (!host) return;
+  const state = termState();
+  const rows = termSnapshotRows(state);
+  const stamp = `${rows.length}:${state.row}:${state.col}:${rows.length ? rows[rows.length - 1].before.length : 0}`;
+  if (previousPainted !== undefined && stamp === previousPainted) return;
+  state.painted = stamp;
+  const fragment = document.createDocumentFragment();
+  for (const row of rows) {
+    const line = document.createElement("div");
+    line.className = "term-row";
+    line.append(document.createTextNode(row.before));
+    if (row.at) {
+      const cursor = document.createElement("span");
+      cursor.className = "term-cursor";
+      cursor.textContent = row.at;
+      line.append(cursor);
+      line.append(document.createTextNode(row.after));
+    }
+    fragment.append(line);
+  }
+  host.replaceChildren(fragment);
+  if (state.follow) host.scrollTop = host.scrollHeight;
+}
+
+function wireTerminalView() {
+  const button = $("terminal-raw");
+  if (button) button.addEventListener("click", () => setTerminalView(!terminalOn()));
+  const host = $("termLines");
+  if (host) {
+    host.addEventListener("scroll", () => {
+      const state = termState();
+      state.follow = host.scrollHeight - host.scrollTop - host.clientHeight < 24;
+    });
+  }
+}
+
 globalThis.PWLogWorkspace = {
   contractVersion: HOOK_CONTRACT_VERSION,
   hookContract: HOOK_SURFACE,
@@ -11690,6 +11964,19 @@ globalThis.PWLogWorkspace = {
     queueMax: TERMINAL_QUEUE_MAX,
     clickSlop: CAPTURE_CLICK_SLOP,
   },
+  // 原始串口的终端视图（O14B）：按字节重放的纯模型 + 开关（宿主回归直接驱动）。
+  term: {
+    reset: termReset,
+    state: termState,
+    applyBytes: termApplyBytes,
+    render: renderTerminalNow,
+    snapshot: termSnapshotRows,
+    hexBytes: termHexBytes,
+    on: terminalOn,
+    setView: setTerminalView,
+    maxRows: TERM_MAX_ROWS,
+    maxCols: TERM_MAX_COLS,
+  },
   // 命令输入行的高度（W6-1）：拖动条改的就是它，越界值一律夹回区间。
   dock: {
     height: dockHeight,
@@ -11954,6 +12241,7 @@ function boot() {
   renderImportState();
   wireConsoleInput();
   wirePaneCapture();
+  wireTerminalView();
   wireCommandDock();
   window.addEventListener("hashchange", () => {
     const match = /run=([^&]+)/.exec(window.location.hash);

@@ -1114,6 +1114,44 @@ def check_warm_log_surfaces_are_light() -> None:
     )
 
 
+def check_raw_terminal_view() -> None:
+    """原始串口的终端视图（O14B）：按字节重放回车/退格/光标，只换显示不改证据。"""
+    print("\n[11] 原始串口终端视图：按字节重放光标、回车与退格")
+    app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (CONSOLE_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    observe_py = (CONSOLE_DIR / "observe.py").read_text(encoding="utf-8")
+    style_css = (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8")
+    check(
+        "每一行原始字节跟着行事件一起发（超长只带前一段并标截断）",
+        'fields["bytes_hex"] = keep.hex()' in observe_py
+        and 'fields["bytes_truncated"] = True' in observe_py
+        and "RAW_BYTES_HEX_MAX = 8192" in observe_py,
+        "",
+    )
+    check(
+        "页面有终端视图容器与开关，默认仍按行显示",
+        'id="termLines"' in index_html
+        and 'id="terminal-raw"' in index_html
+        and '#pane-raw[data-terminal="1"] > .log-lines { display: none; }' in style_css,
+        "",
+    )
+    check(
+        "回车/换行/退格/制表按字节处理，未知序列吞掉不崩",
+        "if (byte === 0x0d)" in app_js
+        and "if (byte === 0x0a)" in app_js
+        and "if (byte === 0x08)" in app_js
+        and "if (byte === 0x09)" in app_js
+        and "termCsi(state, params, String.fromCharCode(feed[at]));" in app_js,
+        "",
+    )
+    check(
+        "终端只是显示层：行模型与证据一字未改",
+        "termFeedEvent(event);" in app_js
+        and 'add("raw", feed(store, "raw", event.line, event.ts, { defer, lineNo: event.line_no }));' in app_js,
+        "",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1126,6 +1164,7 @@ def main() -> int:
     check_window_source_isolation_contract()
     check_history_list_reads_names_without_hashing()
     check_warm_log_surfaces_are_light()
+    check_raw_terminal_view()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))

@@ -131,6 +131,11 @@ DEFAULT_SESSIONS_DIR = LOGGER_DIR / SESSION_DIR_NAME
 
 OBSERVE_BAUD = 115200
 
+#: 「原始串口」一行最多往 SSE 里带多少**原始字节**（十六进制编码前的字节数）。
+#: 页面的终端视图按这些字节重放光标与退格；超过这个量的行只带前一段并标
+#: `bytes_truncated`，完整字节始终在 `raw.bin` 里 —— 不让一个二进制大块把 SSE 帧撑爆。
+RAW_BYTES_HEX_MAX = 8192
+
 #: 实时观察里「多久重算一次指标序列」（秒）。设备打一条 `[I][metric]` 的间隔是 2～30 s，
 #: 所以这个节流实际上等于"每条新度量行算一次"；它挡的是"一批行里算很多次"。
 LIVE_METRICS_INTERVAL_S = 1.0
@@ -2009,13 +2014,22 @@ class ObserveSession:
         """「原始串口」窗口的一行 —— 与 raw.bin 里那一行是同一份字节。
 
         `line_no` = 它是 raw.bin 的第几行（1 基）；0 = 数不出来（不带这个字段）。
+        `bytes_hex` = 这一行的**原始字节**（页面的终端视图按它重放光标与退格；
+        `line` 是解码后的视图，按 `line` 重放会把 `\\r` 覆盖过的那一段也画出来）。
+        ⚠️ 单行超过 `RAW_BYTES_HEX_MAX` 时只带前一段并标 `bytes_truncated` ——
+        不让一个二进制大块把 SSE 帧撑爆；完整字节始终在 `raw.bin` 里。
         """
+        cap = RAW_BYTES_HEX_MAX
+        keep = line[:cap]
         try:
             fields = self._line_fields(
                 line.decode("utf-8", "replace").rstrip("\r\n"),
                 {"raw": line_no},
                 "raw",
             )
+            fields["bytes_hex"] = keep.hex()
+            if len(line) > cap:
+                fields["bytes_truncated"] = True
             self._emit("raw", continuation=continuation, **fields)
         except Exception:  # 广播失败不能影响采集
             pass
