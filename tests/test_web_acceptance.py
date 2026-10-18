@@ -993,6 +993,55 @@ def check_case_surface_and_run_state_follow_the_truth() -> None:
           "")
 
 
+def check_history_list_reads_names_without_hashing() -> None:
+    """历史列表只读「有哪些工件」，不为展示计算内容哈希（需求 §8.2）。
+
+    验收方式不是“看代码里有没有 iterdir”，而是：把 `sha256_file` 换成一个**一调用就报错**
+    的替身，再跑 `summaries()` —— 列表这一步只要碰了内容哈希就会当场失败；
+    `artifacts()` 仍然能拿到 sha256（按需的证据索引没有被删掉）。
+    """
+    print("\n[8] 历史列表：只读工件名，不算内容哈希")
+    import runstore
+
+    with tempfile.TemporaryDirectory(prefix="pw-runs-") as scratch:
+        runs_dir = Path(scratch)
+        for index in range(3):
+            run = runs_dir / f"2026010{index + 1}-000000-list"
+            run.mkdir()
+            for name in runstore.MANDATORY_ARTIFACTS:
+                (run / name).write_bytes(b"x")
+            (run / "tool.log").write_text("ok\n", encoding="utf-8")
+        store = runstore.RunStore(runs_dir)
+        expected = {row["run_id"]: row["artifact_names"] for row in store.summaries()}
+
+        original = runstore.sha256_file
+
+        def _refuse(path):
+            raise AssertionError(f"历史列表不该计算哈希：{path}")
+
+        runstore.sha256_file = _refuse
+        try:
+            rows = store.summaries()
+            raised = ""
+        except AssertionError as error:
+            rows, raised = [], str(error)
+        finally:
+            runstore.sha256_file = original
+
+        check("列一遍历史不碰内容哈希", len(rows) == 3 and not raised, raised or f"rows={len(rows)}")
+        check(
+            "列表里的工件名与按需索引逐条相同（名字、顺序都不变）",
+            all(row["artifact_names"] == expected.get(row["run_id"]) for row in rows),
+            str([(row["run_id"], row["artifact_names"]) for row in rows])[:200],
+        )
+        indexed = store.artifacts(sorted(expected)[0])
+        check(
+            "需要哈希时仍能从按需索引里拿到",
+            bool(indexed) and all("sha256" in row for row in indexed.values()),
+            str(indexed)[:160],
+        )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1002,6 +1051,7 @@ def main() -> int:
     check_sniff_transport_and_failure_modes()
     check_sniff_progress_and_the_concurrency_gate()
     check_case_surface_and_run_state_follow_the_truth()
+    check_history_list_reads_names_without_hashing()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))

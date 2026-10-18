@@ -297,22 +297,26 @@ class RunStore:
     def summaries(self, limit: int = 40) -> list[dict[str, Any]]:
         if not self.runs_dir.is_dir():
             return []
-        ids = sorted(
-            (
-                entry.name
-                for entry in self.runs_dir.iterdir()
-                # A directory name alone is not a run.  Build tools and humans
-                # may leave grouping/scratch directories below ``runs/`` (the
-                # first real example was an empty ``runs/stm32`` directory).
-                # ``create()`` writes all four mandatory artifacts before it
-                # returns, so requiring that evidence contract keeps genuine
-                # interrupted runs while excluding unrelated directories.
-                if entry.is_dir()
-                and RUN_ID_PATTERN.match(entry.name)
-                and all((entry / name).is_file() for name in MANDATORY_ARTIFACTS)
-            ),
-            reverse=True,
-        )[:limit]
+        # 列表只需要「有哪些工件」：一次 `iterdir` 记下每个 run 目录里**实际存在的文件**，
+        # 不为此逐个工件算 sha256（大 raw.bin 会把 `/api/runs` 拖到秒级；哈希仍由按需的
+        # 证据索引 `artifacts()` 负责）。
+        listing: dict[str, set[str]] = {}
+        for entry in self.runs_dir.iterdir():
+            if not entry.is_dir() or not RUN_ID_PATTERN.match(entry.name):
+                continue
+            try:
+                present = {item.name for item in entry.iterdir() if item.is_file()}
+            except OSError:
+                continue
+            # A directory name alone is not a run.  Build tools and humans
+            # may leave grouping/scratch directories below ``runs/`` (the
+            # first real example was an empty ``runs/stm32`` directory).
+            # ``create()`` writes all four mandatory artifacts before it
+            # returns, so requiring that evidence contract keeps genuine
+            # interrupted runs while excluding unrelated directories.
+            if all(name in present for name in MANDATORY_ARTIFACTS):
+                listing[entry.name] = present
+        ids = sorted(listing, reverse=True)[:limit]
         rows: list[dict[str, Any]] = []
         for run_id in ids:
             report = self.review_report(run_id)
@@ -337,7 +341,11 @@ class RunStore:
                     #    旧 run 如实标 `legacy=true`，`scan_seq` 留空（历史里没有这个数，不补）。
                     #    manifest 本来就在本循环里读（suite/target/port 都从它取），多这一行不多一次 IO。
                     "device": device_sniff.recorded_target(manifest).to_json(),
-                    "artifact_names": list(self.artifacts(run_id)),
+                    # 列表只要**有哪些工件**；哈希在按需的证据索引里（`artifacts()`），
+                    # 这里逐份算 hash 会把首页/结束后的一次读拖成秒级。
+                    "artifact_names": [
+                        name for name in KNOWN_ARTIFACTS if name in listing[run_id]
+                    ],
                 }
             )
         return rows
