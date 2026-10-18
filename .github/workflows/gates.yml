@@ -1,0 +1,46 @@
+name: gates
+
+# 合并门禁（需求 §8.6）：全量门禁 + 真实浏览器 E2E（跳过不算通过）+ 新增提交信息检查。
+# ⚠️ 这里装 playwright 与 chromium 是**故意的**：没有浏览器时 `tests/run_all.py` 会把
+#    真实浏览器 E2E 记成 SKIP，而 SKIP 现在会让它退出码非 0 —— 也就是说“门禁没跑”不会被当成绿灯。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装浏览器驱动
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: 全量门禁（含真实浏览器 E2E）
+        env:
+          PW_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules
+        run: python tests/run_all.py
+
+      - name: 新增提交信息（单行中文 60 字、范围必填）
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) base="HEAD~1" ;;
+          esac
+          python tools/check_commit_message.py --range "$base..HEAD"
