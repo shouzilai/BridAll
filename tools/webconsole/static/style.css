@@ -1687,6 +1687,19 @@ button.danger:hover:not(:disabled) { border-color: #a34b4b; color: #ffd0d0; }
   color: var(--log-text);
 }
 .term-row { min-height: var(--log-line-h); white-space: pre-wrap; }
+/* 行号/时间戳前缀：与行视图同一个做法（伪元素 + attr，复制与全选不带上）。 */
+.term-lines .term-row::before { color: var(--log-muted); }
+.term-lines[data-prefix="ln"] .term-row::before { content: attr(data-ln); }
+.term-lines[data-prefix="time"] .term-row::before { content: attr(data-time); }
+.term-lines[data-prefix="both"] .term-row::before { content: attr(data-ln) attr(data-time); }
+/* 自动换行关掉时横向滚动（而不是把长行截断）。 */
+.term-lines[data-wrap="0"] { white-space: pre; overflow-x: auto; }
+.term-lines[data-wrap="0"] .term-row { white-space: pre; }
+/* 折叠重复：露出一个 ×N，与行视图同一个徽标口径。 */
+.term-row[data-repeat]::after { content: " ×" attr(data-repeat); color: var(--warn); }
+/* 搜索命中：当前那一处再用主题的“当前命中”色（不只靠颜色：它是 mark 元素本身）。 */
+.term-row mark { background: var(--log-mark-bg); color: var(--log-mark-fg); border-radius: 2px; }
+.term-row mark.current { background: var(--log-mark-current-bg); color: var(--log-mark-current-fg); }
 /* 光标块：与正文反色（两套主题各自成立，不另立一个颜色）。 */
 .term-cursor { background: var(--log-text); color: var(--log-surface); border-radius: 2px; }
 

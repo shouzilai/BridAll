@@ -1742,6 +1742,9 @@ function renderView(store, id) {
   resetView(store, id);
   const appended = renderPending(store, id);
   if (source.el && source.followTail) source.el.scrollTop = source.el.scrollHeight;
+  // 条件（排除/只看错误/级别/模块/折叠重复/搜索/行号/时间戳）变了就一起重画终端：
+  // 两套画法共用同一份视图状态，不能一边变了另一边停在旧画面上。
+  if (id === "raw" && terminalOn()) renderTerminalNow();
   return appended;
 }
 
@@ -2241,15 +2244,20 @@ function updateLogIndicators(store) {
       button.setAttribute("aria-pressed", view[key] ? "true" : "false");
     }
     if (source.hitsLabel && !cardsPane) {
-      // 计数栏宽度固定（5ch），否则“0/0”与“0/62”会把工具条折在不同的地方，
-      // 四个窗口的日志区就不在同一条水平线上了。错误用 “!” 表示，详情写在 title 里。
-      source.hitsLabel.textContent = compiled.error ? "!" : `${total ? view.hitCursor + 1 : 0}/${total}`;
-      source.hitsLabel.dataset.state = compiled.error ? "error" : (view.query && !total ? "none" : "");
-      source.hitsLabel.title = compiled.error
-        ? `${compiled.error} —— 搜索暂不生效，视图仍是全部行`
-        : view.query
-          ? `命中 ${total} 处（在当前过滤条件下）`
-          : "输入关键字后回车找下一个；.* 表示按正则匹配";
+      // 原始串口开着终端视图时，这一格由终端自己写：终端把 `\r` 覆盖与折叠也算进正文，
+      // 行视图那份计数与屏幕上看到的不是一回事（两边都写就成了“闪一下又变回去”）。
+      const terminalOwns = Boolean(source.el && source.el.id === "lines-raw" && terminalOn());
+      if (!terminalOwns) {
+        // 计数栏宽度固定（5ch），否则“0/0”与“0/62”会把工具条折在不同的地方，
+        // 四个窗口的日志区就不在同一条水平线上了。错误用 “!” 表示，详情写在 title 里。
+        source.hitsLabel.textContent = compiled.error ? "!" : `${total ? view.hitCursor + 1 : 0}/${total}`;
+        source.hitsLabel.dataset.state = compiled.error ? "error" : (view.query && !total ? "none" : "");
+        source.hitsLabel.title = compiled.error
+          ? `${compiled.error} —— 搜索暂不生效，视图仍是全部行`
+          : view.query
+            ? `命中 ${total} 处（在当前过滤条件下）`
+            : "输入关键字后回车找下一个；.* 表示按正则匹配";
+      }
     }
     if (source.menuBtn) source.menuBtn.setAttribute("aria-expanded", source.menuOpen ? "true" : "false");
     if (source.menu) source.menu.hidden = !source.menuOpen;
@@ -2398,6 +2406,8 @@ function paintCurrentHit(source) {
   // 手算滚动位置，不用 scrollIntoView —— 后者会把整个页面也一起拖走。
   const target = node.offsetTop - source.el.clientHeight / 2 + node.offsetHeight / 2;
   source.el.scrollTop = Math.max(0, target);
+  // 终端视图开着时它就是这一窗的正文：当前命中同样要滚过去、同样要标 current。
+  if (source.el.id === "lines-raw" && terminalOn()) renderTerminalNow();
   source.followTail = false;                // 用户在看某一处命中，不是尾巴
 }
 
@@ -11336,7 +11346,10 @@ const TERM_MAX_COLS = 400;
 const TERM_TAB = 8;
 
 function createTermState() {
-  return { rows: [[]], row: 0, col: 0, follow: true, partial: new Uint8Array(0), painted: "" };
+  return {
+    rows: [[]], row: 0, col: 0, follow: true, partial: new Uint8Array(0),
+    lns: [null], times: [null], nextLn: null, nextTs: "",
+  };
 }
 
 let TERM_STATE = null;
@@ -11367,7 +11380,11 @@ function setTerminalView(on) {
 }
 
 function termRowChars(state, index) {
-  while (state.rows.length <= index) state.rows.push([]);
+  while (state.rows.length <= index) {
+    state.rows.push([]);
+    state.lns.push(state.nextLn);
+    state.times.push(state.nextTs);
+  }
   return state.rows[index];
 }
 
@@ -11535,14 +11552,15 @@ function termHexBytes(hex) {
 function termFeedEvent(event) {
   if (!terminalOn()) return;
   const state = termState();
-  const before = state.painted;
+  state.nextLn = Number((event && event.line_no) || 0) || null;
+  state.nextTs = String((event && event.ts) || "");
   if (event && event.bytes_hex) {
     termApplyBytes(termHexBytes(event.bytes_hex));
   } else {
-    // 旧服务 / 旧录音没有字节：按解码后的这一行 + 换行显示（并在状态行如实说明）。
+    // 旧服务 / 旧录音没有字节：按解码后的这一行 + 换行显示（行号/时间戳仍然可用）。
     termApplyBytes(new TextEncoder().encode(`${String((event && event.line) || "")}\n`));
   }
-  renderTerminalNow(before);
+  renderTerminalNow();
 }
 
 function termSnapshotRows(state) {
@@ -11557,30 +11575,102 @@ function termSnapshotRows(state) {
   });
 }
 
-function renderTerminalNow(previousPainted) {
+/* 这一窗当前挂着的视图（行视图与终端视图**共用同一份条件**：排除、只看错误、级别/模块、
+ * 折叠重复、搜索、行号/时间戳）。取不到就返回 null，终端就只画正文，不自己编一套条件。 */
+function termRawView() {
+  const sources = (typeof attachedLog !== "undefined" && attachedLog && attachedLog.sources) || null;
+  const source = sources && sources.raw;
+  return (source && source.view) || null;
+}
+
+function updateTerminalHits(total, cursor, hasQuery) {
+  const label = $("hits-raw");
+  if (!label) return;
+  label.textContent = hasQuery ? `${total ? Math.min(Math.max(1, cursor + 1), total) : 0}/${total}` : "0/0";
+  label.dataset.state = hasQuery && !total ? "none" : "";
+}
+
+function renderTerminalNow() {
   const host = $("termLines");
   if (!host) return;
   const state = termState();
-  const rows = termSnapshotRows(state);
-  const stamp = `${rows.length}:${state.row}:${state.col}:${rows.length ? rows[rows.length - 1].before.length : 0}`;
-  if (previousPainted !== undefined && stamp === previousPainted) return;
-  state.painted = stamp;
+  const view = termRawView();
+  const filtering = Boolean(view && typeof view.level === "string");
+  const dedupe = Boolean(view && view.dedupe);
+  host.dataset.wrap = view && view.wrap === false ? "0" : "1";
+  host.dataset.prefix = view && view.lineNumbers && view.timestamps ? "both"
+    : view && view.lineNumbers ? "ln"
+      : view && view.timestamps ? "time" : "none";
+  const compiled = view && view.query ? compileQuery(view) : { re: null };
+  const re = compiled.re || null;
+  const currentSlot = Number((view && view.hitCursor) || 0);
+  let hits = 0;
+  let previousText = null;
+  let repeatNode = null;
+  let repeatCount = 0;
+  let scrollTarget = null;
   const fragment = document.createDocumentFragment();
-  for (const row of rows) {
+  const snapshot = termSnapshotRows(state);
+  for (let index = 0; index < snapshot.length; index += 1) {
+    const row = snapshot[index];
+    const text = row.at ? `${row.before}${row.at}${row.after}` : row.before;
+    // 条件与行视图**同一条口径**：看不见的行一个节点也不建（为何看不见由行视图的模型回答）。
+    if (filtering && hiddenReason(view, text)) continue;
+    if (dedupe && previousText === text && repeatNode) {
+      repeatCount += 1;
+      repeatNode.dataset.repeat = String(repeatCount);
+      continue;
+    }
     const line = document.createElement("div");
     line.className = "term-row";
-    line.append(document.createTextNode(row.before));
-    if (row.at) {
+    if (state.lns[index]) line.dataset.ln = `${state.lns[index]} `;
+    if (state.times[index]) line.dataset.time = `${beijingClock(state.times[index])} `;
+    const ranges = re ? matchRanges(re, text) : [];
+    const isCursorRow = index === state.row;
+    if (isCursorRow) {
+      // 光标行：正文、光标块、后文三段拼起来（命中高亮不嵌在光标块里）。
+      line.append(document.createTextNode(row.before));
       const cursor = document.createElement("span");
       cursor.className = "term-cursor";
-      cursor.textContent = row.at;
+      cursor.textContent = row.at || " ";
       line.append(cursor);
       line.append(document.createTextNode(row.after));
+      if (ranges.length) scrollTarget = scrollTarget || line;
+    } else if (ranges.length) {
+      let slot = hits;
+      let cursorAt = 0;
+      for (const [start, end] of ranges) {
+        if (start > cursorAt) line.append(document.createTextNode(text.slice(cursorAt, start)));
+        const mark = document.createElement("mark");
+        mark.className = "hit";
+        if (slot === currentSlot) {
+          mark.classList.add("current");
+          scrollTarget = line;
+        }
+        mark.textContent = text.slice(start, end);
+        line.append(mark);
+        cursorAt = end;
+        slot += 1;
+      }
+      if (cursorAt < text.length) line.append(document.createTextNode(text.slice(cursorAt)));
+    } else {
+      line.textContent = text;
     }
+    hits += ranges.length;
+    previousText = text;
+    repeatNode = line;
+    repeatCount = 1;
     fragment.append(line);
   }
   host.replaceChildren(fragment);
-  if (state.follow) host.scrollTop = host.scrollHeight;
+  if (scrollTarget) {
+    const target = scrollTarget.offsetTop - host.clientHeight / 2 + scrollTarget.offsetHeight / 2;
+    host.scrollTop = Math.max(0, target);
+    state.follow = false;
+  } else if (state.follow) {
+    host.scrollTop = host.scrollHeight;
+  }
+  updateTerminalHits(hits, currentSlot, Boolean(view && view.query));
 }
 
 function wireTerminalView() {

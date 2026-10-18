@@ -1150,6 +1150,23 @@ def check_raw_terminal_view() -> None:
         and 'add("raw", feed(store, "raw", event.line, event.ts, { defer, lineNo: event.line_no }));' in app_js,
         "",
     )
+    check(
+        "筛选与搜索直接作用在终端正文（与行视图同一套模型）",
+        "if (filtering && hiddenReason(view, text)) continue;" in app_js
+        and "if (dedupe && previousText === text && repeatNode) {" in app_js
+        and "const ranges = re ? matchRanges(re, text) : [];" in app_js
+        and "updateTerminalHits(hits, currentSlot, Boolean(view && view.query));" in app_js
+        and '.term-row[data-repeat]::after { content: " ×" attr(data-repeat);' in
+        (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8"),
+        "",
+    )
+    check(
+        "条件变更与当前命中都会重画终端，且计数归终端自己写",
+        'if (id === "raw" && terminalOn()) renderTerminalNow();' in app_js
+        and 'if (source.el.id === "lines-raw" && terminalOn()) renderTerminalNow();' in app_js
+        and 'const terminalOwns = Boolean(source.el && source.el.id === "lines-raw" && terminalOn());' in app_js,
+        "",
+    )
 
 
 def main() -> int:
