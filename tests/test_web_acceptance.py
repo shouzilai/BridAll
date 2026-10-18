@@ -1087,6 +1087,33 @@ def check_history_list_reads_names_without_hashing() -> None:
         )
 
 
+def check_warm_log_surfaces_are_light() -> None:
+    """暖色工作台的五窗、阶段卡与输入区用浅暖表面（需求 §8.2），不再是大面积近黑。"""
+    print("\n[10] 暖色日志表面：五窗不是近黑工作区")
+    style_css = (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8")
+    check(
+        "暖色日志表面令牌齐全",
+        "--log-surface: #f7eee1" in style_css
+        and "--log-text: #3b2b1e" in style_css
+        and "--log-mark-bg: #ffe7ad" in style_css
+        and "--stage-line: #dcc9b0" in style_css,
+        "",
+    )
+    check(
+        "五窗正文、当前行、命中与阶段卡都消费令牌",
+        ":root[data-theme=\"warm\"] .log-pane { background: var(--log-surface); }" in style_css
+        and ":root[data-theme=\"warm\"] .log-lines { color: var(--log-text); }" in style_css
+        and ':root[data-theme="warm"] .log-line[data-current="1"] { background: var(--log-row-hover); }' in style_css
+        and "background: var(--log-surface-3)" in style_css,
+        "",
+    )
+    check(
+        "没有人再把暖色日志窗涂回深色",
+        re.search(r':root\[data-theme="warm"\] \.log-pane\s*\{[^}]*background:\s*#1', style_css) is None,
+        "",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1098,6 +1125,7 @@ def main() -> int:
     check_case_surface_and_run_state_follow_the_truth()
     check_window_source_isolation_contract()
     check_history_list_reads_names_without_hashing()
+    check_warm_log_surfaces_are_light()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))

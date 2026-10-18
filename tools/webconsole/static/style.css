@@ -29,6 +29,26 @@
   --warn: #e2b341;
   --warn-border: #6b5723;
   --accent-line: #2c5a8c;
+  /* ---- 日志工作区（五窗正文、阶段卡、工具条按钮、滚动条）----
+     深色调试 = 现有取值（外观零变化）；暖色工作台在 `[data-theme="warm"]` 里覆盖同一批名字。
+     ⚠️ 规则里不再散落这批颜色：组件只消费令牌。 */
+  --log-surface: #12171f;
+  --log-surface-3: #1b2330;
+  --log-text: #cfe0f4;
+  --log-muted: #5f7086;
+  --log-row-hover: #1d2733;
+  --log-mark-bg: #33512c;
+  --log-mark-fg: #dff0d0;
+  --log-mark-current-bg: var(--warn);
+  --log-mark-current-fg: #201404;
+  --stage-line: #3d4a5c;
+  --stage-btn-bg: #223041;
+  --stage-btn-bg-hover: #2b3d52;
+  --stage-neutral: #6b7280;
+  --tool-on-bg: #1b2a3a;
+  --cmd-open-hover: #22303f;
+  --sb-thumb: #3a4a5e;
+  --sb-thumb-hover: #4d6a8a;
   --topbar-bg: #131922;
   --field-bg: #131922;
   --field-border: var(--line);
@@ -119,6 +139,28 @@
   /* “当前窗口”那一圈描边：暖色下跟着暖色走（深色主题那个蓝不许漏到浅底上来）。 */
   --pane-active-border: #c2762f;
   --pane-active-glow: 0 0 18px -6px rgba(217, 119, 42, .75);
+  /* 暖色日志工作区：与断言卡同源的浅暖表面（正文比卡片略深一档），语义色直接用暖色那一套。 */
+  --log-surface: #f7eee1;
+  --log-surface-3: #f5ebdc;
+  --log-text: #3b2b1e;
+  --log-muted: #6d584a;
+  --log-row-hover: #f0e4d2;
+  --log-mark-bg: #ffe7ad;
+  --log-mark-fg: #40300f;
+  --log-mark-current-bg: #a35712;
+  --log-mark-current-fg: #fffdf9;
+  --stage-line: #dcc9b0;
+  --stage-btn-bg: #fdf7ee;
+  --stage-btn-bg-hover: #f0e3cf;
+  --stage-neutral: #8a7466;
+  --tool-on-bg: #f3e6d3;
+  --cmd-open-hover: #f3e6d3;
+  --sb-thumb: #d9c8b0;
+  --sb-thumb-hover: #bfa88a;
+  /* 浅底上不再用“更亮/更暗”区分当前窗口：那会把正文对比度拉低。
+     当前窗口仍靠描边、标题栏底色与加粗标题表达。 */
+  --pane-active-brightness: 1;
+  --pane-dim: 1;
   --topbar-bg: #f8efe4;
   --field-bg: #fffaf5;
   --field-border: #e4d3bb;
@@ -136,10 +178,10 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #3a4a5e;
+  background: var(--sb-thumb);
   border-radius: calc(var(--scrollbar-w) / 2);
 }
-::-webkit-scrollbar-thumb:hover { background: #4d6a8a; }
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
 
 * { box-sizing: border-box; }
 
@@ -904,29 +946,36 @@ button.primary:hover:not(:disabled) { background: #63adfb; }
   background: var(--panel);
 }
 :root[data-theme="warm"] .pane-head { border-color: var(--line); }
-:root[data-theme="warm"] .log-pane { background: #12171f; }
+/* 暖色下日志窗**不再**保留深色工作区：五窗正文、阶段卡、工具条与输入区都用 `--log-*`
+   令牌的浅暖表面，语义色直接用暖色那一套（上一版为了让深色正文里的绿/红站得住而
+   另立的深底取值已删：浅底上那套反而看不清）。 */
+:root[data-theme="warm"] .log-pane { background: var(--log-surface); }
+:root[data-theme="warm"] .log-lines { color: var(--log-text); }
+:root[data-theme="warm"] .log-line::before { color: var(--log-muted); }
+:root[data-theme="warm"] .log-line mark { background: var(--log-mark-bg); color: var(--log-mark-fg); }
+:root[data-theme="warm"] .log-line mark.current { background: var(--log-mark-current-bg); color: var(--log-mark-current-fg); }
+:root[data-theme="warm"] .log-line[data-current="1"] { background: var(--log-row-hover); }
+:root[data-theme="warm"] .log-pane[data-paused="1"] { border-color: var(--warn-border); }
+:root[data-theme="warm"] .stage > details { background: var(--log-surface-3); border-left-color: var(--stage-line); }
+:root[data-theme="warm"] .stage-bullet { background: var(--stage-line); }
+:root[data-theme="warm"] .stage-locate { background: var(--stage-btn-bg); border-color: var(--stage-line); }
+:root[data-theme="warm"] .stage-locate:hover:not(:disabled) { background: var(--stage-btn-bg-hover); }
+:root[data-theme="warm"] .steps li[data-status="pending"] { border-left-color: var(--stage-line); }
+:root[data-theme="warm"] .assert-domain,
+:root[data-theme="warm"] .run-progress,
+:root[data-theme="warm"] .run-preview { background: var(--log-surface-3); }
+:root[data-theme="warm"] .pane-notice,
+:root[data-theme="warm"] .pane-why,
+:root[data-theme="warm"] .pending-pill { background: var(--tool-on-bg); }
+:root[data-theme="warm"] .tool-ico[aria-pressed="true"],
+:root[data-theme="warm"] .tool-ico[aria-expanded="true"],
+:root[data-theme="warm"] .tool-ico:hover,
+:root[data-theme="warm"] .tool-ico:focus-visible { background: var(--tool-on-bg); }
+:root[data-theme="warm"] .cmd-open:hover { background: var(--cmd-open-hover); }
 :root[data-theme="warm"] .log-pane[data-active="1"] { box-shadow: 0 0 0 2px rgba(217, 119, 42, .18), 0 12px 24px rgba(122, 89, 60, .18); }
 :root[data-theme="warm"] .log-pane[data-active="1"] .pane-head { background: #fdf1de; }
 :root[data-theme="warm"] .log-pane[data-active="1"] .pane-title { color: var(--text); }
-/* ⚠️ 暖色主题下**日志窗口仍是深色工作区**（既定设计，见下面的 `.log-pane` 背景）⇒
-   这一格里的“成功 / 定位”按**深底**取值：浅底那一套（深绿 / 淡绿）在黑底上根本看不见，
-   而且日志窗口在两种主题下必须是**同一套颜色语义**（用户口径 2026-10-13）。 */
-:root[data-theme="warm"] .log-pane {
-  --ok: #46c07a;
-  --pass: var(--ok);
-  --ok-border: #2f8a58;
-  --loc: #46c07a;
-  --loc-bg: rgba(70, 192, 122, .14);
-  --loc-bg-strong: rgba(70, 192, 122, .24);
-}
-:root[data-theme="warm"] .log-pane .stage {
-  --text: #dde4ee;
-  --muted: #8d9aab;
-  --accent: #4c9ef8;
-  --fail: #f0605f;
-  --warn: #e2b341;
-}
-:root[data-theme="warm"] .log-pane .stage-empty { color: #8d9aab; }
+:root[data-theme="warm"] .log-pane .stage-empty { color: var(--log-muted); }
 :root[data-theme="warm"] .log-pane .stage .stage-locate { color: var(--control-text); }
 :root[data-theme="warm"] .find-input,
 :root[data-theme="warm"] .cmd-input,
