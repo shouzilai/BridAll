@@ -41,6 +41,14 @@ git config core.hooksPath .githooks                        # 安装本地 commit
 
 钩子只提供快速反馈，可以被 `--no-verify` 绕过；**合并前以 `--range` 的检查结果为准**。
 
+**范围必填**：`(<范围>)` 不是可选项，`feat: xxx` 这类缺范围的写法会被判为不合格
+（`tests/test_commit_messages.py` 有对应判据）。范围写受影响的部分，例如
+`web`、`tools`、`tests`、`docs`、`repo`。
+
+远端门禁在 `.github/workflows/gates.yml`：push / PR 到 `main` 时跑全量
+`python tests\run_all.py`（先装好 playwright + chromium，**跳过不算通过**）
+再跑一段区间的提交信息检查。
+
 ## 4. 验证
 
 ```powershell

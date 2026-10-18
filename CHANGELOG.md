@@ -12,7 +12,10 @@
   同一事件号若被两个窗口画过，能被机器判据当场抓出来；
 - 历史列表只读工件名，不再为展示计算内容哈希（大 `raw.bin` 不再拖慢 `/api/runs`）；
 - 新增提交信息门禁：单行、中文、整行不超过 60 个 Unicode 字符；`CONTRIBUTING.md` 与
-  `tools/check_commit_message.py` 一并提供，可装进本地 `commit-msg` 钩子。
+  `tools/check_commit_message.py` 一并提供，可装进本地 `commit-msg` 钩子；
+- 门禁口径收紧：`tests/run_all.py` 把 `SKIP` 单独统计并令退出码非 0（**跳过不算通过**），
+  提交信息的 `(<范围>)` 改为必填（与 `CONTRIBUTING.md` 一致），并在
+  `.github/workflows/gates.yml` 加远端门禁（全量套件 + 提交信息区间检查）。
 
 ## 0.1.0 — 首次发布版本
 
