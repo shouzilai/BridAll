@@ -103,13 +103,18 @@ def main() -> int:
         _run("开源边界（全仓）",
              [sys.executable, str(TOOLS_DIR / "hwops.py"), "opensource-audit", "--scope", "all"])
     )
+    passed = [label for label, item in zip(labels, results) if item == "OK"]
     failed = [label for label, item in zip(labels, results) if item == "FAIL"]
     skipped = [label for label, item in zip(labels, results) if item == "SKIP"]
-    summary = f"\n{len(results) - len(failed)}/{len(results)} 项通过"
+    summary = f"\n{len(passed)}/{len(results)} 项通过"
+    if failed:
+        summary += f"；失败 {len(failed)} 项（{'、'.join(failed)}）"
     if skipped:
         summary += f"；跳过 {len(skipped)} 项（{'、'.join(skipped)}）—— 跳过不算通过"
     print(summary)
-    return 0 if not failed else 1
+    # ⚠️ 跳过的必绿项（例如没装 node+playwright 时的真实浏览器 E2E）**不算通过**：
+    # 分母照算、退出码非 0。否则“这一版整个浏览器门禁没跑”会被当成绿灯推出去。
+    return 0 if not failed and not skipped else 1
 
 
 if __name__ == "__main__":

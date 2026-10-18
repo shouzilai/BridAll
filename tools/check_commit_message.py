@@ -26,7 +26,7 @@ from pathlib import Path
 
 MAX_CHARS = 60
 ALLOWED_TYPES = ("feat", "fix", "docs", "test", "refactor", "chore", "build")
-HEADER = re.compile(r"^(?P<type>[a-z]+)(?:\((?P<scope>[a-z0-9._-]+)\))?: (?P<what>\S.*)$")
+HEADER = re.compile(r"^(?P<type>[a-z]+)\((?P<scope>[a-z0-9._-]+)\): (?P<what>\S.*)$")
 VAGUE = ("update", "misc", "wip", "fixup", "tmp")
 GENERATED = re.compile(r"^(Merge |Revert )")
 CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -50,7 +50,7 @@ def problems_for(message: str) -> list[str]:
         found.append("结尾不加句号")
     match = HEADER.match(subject)
     if not match:
-        found.append("格式应为 <类型>(<范围>): <中文动作说明>")
+        found.append("格式应为 <类型>(<范围>): <中文动作说明>（范围必填）")
     else:
         if match.group("type") not in ALLOWED_TYPES:
             found.append(f"类型只能是 {'/'.join(ALLOWED_TYPES)}")

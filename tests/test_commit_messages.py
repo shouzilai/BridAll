@@ -33,9 +33,9 @@ def main() -> int:
         str(gate.problems_for("feat(webconsole): 事件到五窗的归属改为显式映射")),
     )
     check(
-        "带范围与不带范围都接受",
-        gate.problems_for("fix: 历史列表只读工件名不算内容哈希") == []
-        and gate.problems_for("docs(repo): 补充贡献规范") == [],
+        "必须带范围（与 CONTRIBUTING 的 <类型>(<范围>) 一致）",
+        gate.problems_for("fix(repo): 历史列表只读工件名不算内容哈希") == []
+        and any("范围必填" in item for item in gate.problems_for("fix: 历史列表只读工件名不算内容哈希")),
         "",
     )
     check(
@@ -45,17 +45,17 @@ def main() -> int:
     )
     check(
         "写正文被拒",
-        any("只能有一行" in item for item in gate.problems_for("feat: 加一个能力\n\n正文说明")),
+        any("只能有一行" in item for item in gate.problems_for("feat(repo): 加一个能力\n\n正文说明")),
         "",
     )
     check(
         "结尾句号被拒",
-        any("句号" in item for item in gate.problems_for("fix: 修掉一个问题。")),
+        any("句号" in item for item in gate.problems_for("fix(repo): 修掉一个问题。")),
         "",
     )
     check(
         "非中文动作说明被拒",
-        any("中文" in item for item in gate.problems_for("fix: fix the thing")),
+        any("中文" in item for item in gate.problems_for("fix(repo): fix the thing")),
         "",
     )
     check(
@@ -70,9 +70,10 @@ def main() -> int:
         "",
     )
     check(
-        "仓库里提供钩子脚本",
-        (ROOT / ".githooks" / "commit-msg").is_file(),
-        "缺 .githooks/commit-msg",
+        "仓库里提供钩子脚本与 CI 工作流",
+        (ROOT / ".githooks" / "commit-msg").is_file()
+        and (ROOT / ".github" / "workflows" / "gates.yml").is_file(),
+        "缺 .githooks/commit-msg 或 .github/workflows/gates.yml",
     )
     print()
     if FAILURES:
