@@ -119,6 +119,8 @@ MODULE_LAYERS: dict[str, str] = {
     "hwops": LAYER_CORE,
     "unicode_console": LAYER_CORE,
     "doctor": LAYER_CORE,
+    # 提交信息门禁（单行、中文、60 字）：与芯片无关的开发工具 ⇒ core。
+    "check_commit_message": LAYER_CORE,
     # --- target：随发布的参考适配（住在 <repo>/targets） --------------------
     "stm32_target": LAYER_TARGET_STM32,
     "esp32_target": LAYER_TARGET_ESP32,

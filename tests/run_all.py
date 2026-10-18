@@ -79,6 +79,13 @@ def main() -> int:
             [sys.executable, str(ROOT / "tests" / "test_repo_hygiene.py")],
         )
     )
+    # 提交信息门禁：单行、中文、整行不超过 60 个 Unicode 字符。
+    scripts.append(
+        (
+            "提交信息门禁",
+            [sys.executable, str(ROOT / "tests" / "test_commit_messages.py")],
+        )
+    )
     # 真实浏览器 E2E（需求 §6.9）：桌面 + 窄屏。需要 node + playwright，没有就记 SKIP。
     scripts.append(
         (

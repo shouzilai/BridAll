@@ -1,0 +1,3 @@
+#!/bin/sh
+# 提交信息门禁（需求 §8.6 第 2 条）。安装一次即可：git config core.hooksPath .githooks
+exec python "$(git rev-parse --show-toplevel)/tools/check_commit_message.py" "$1"
