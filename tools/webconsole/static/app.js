@@ -277,6 +277,11 @@ const app = {
    * 直接判"不是我的"就会把**正在跑的那次会话**的行也丢掉（真机验收：刷新页面后少了 586 行，
    * 还弹了一句"上一次会话（<就是这次会话>）"）。所以先存着，等状态到了按同一道闸再判一遍。 */
   replayHold: { waiting: true, events: [] },
+  /* 未分类事件（一条事件不属于任何窗口）：计数 + 每条原因只报一次。
+   * 它们不进任何窗口的正文 —— 静默丢弃与“本来就没有”长得一样，所以要记账。 */
+  unclassified: { count: 0, reasons: new Map() },
+  /* 渲染账本：`事件号 → 画进哪一窗`。同一事件号进了两个窗口就是串窗，能当场抓出来。 */
+  renderLedger: new Map(),
   /* 这次页面加载时服务端的重放**被截断过**没有（）：实时那一屏的行是
    * 从 SSE 接上来的，截断就意味着窗口的第一行**不是**会话证据的第 1 行 ——
    * 而阶段坐标是按文件行号记的，这时不能按它定位（宁可明说不定位）。 */
@@ -452,6 +457,125 @@ function receivingView() {
 
 function receivingStore() {
   return storeFor(receivingView());
+}
+
+/* ------------------------------------------- 五窗来源隔离（契约层）
+ * 一条事件的正文**只**属于一个窗口：
+ *   · `raw` → 只进「原始串口」；`decoded` → 只进「解码日志」；
+ *   · `tool`（主机/平台/编排流程）→ 只进「工具输出」；
+ *   · `app_events` → 只进「结构化事件」；`test_step(_refs)` → 只进「测试阶段」；
+ * 认不得的 kind ⇒ **不进任何窗**（计数 + 记原因），绝不兜底到工具输出。
+ *
+ * ⚠️ “哪一**屏**”（自动验证 / 实时观察 / 离线诊断）是另一件事，由 `laneStore()` 回答。
+ * ⚠️ `control` = 事件是真的、但它的正文不落任何窗（状态/消息/阶段卡由别的入口画）。
+ */
+const EVENT_WINDOW_BY_KIND = Object.freeze({
+  // —— 落正文的五窗 ——
+  tool: "tool",
+  raw: "raw",
+  decoded: "decoded",
+  app_events: "events",
+  test_step: "stage",
+  test_step_refs: "stage",
+  // —— 控制类（正文不落窗） ——
+  run_started: "control",
+  run_finished: "control",
+  step: "control",
+  live_test: "control",
+  "live_test.device": "control",
+  replay: "control",
+  panic: "control",
+  assert: "control",
+  info: "control",
+  error: "control",
+  observe_state: "control",
+  request_rejected: "control",
+  // —— 服务端会发、但正文不落窗的记账类 ——
+  converge: "control",
+  "host.error": "control",
+  "autotest.chunk": "control",
+  "autotest.stage": "control",
+  "autotest.device": "control",
+  "autotest.error": "control",
+  "autotest.cancelled": "control",
+  tx: "control",
+});
+
+/* 一条事件属于哪一窗（纯函数）：`{ source, reason }`。
+ * `source === null` ⇒ 未分类（不进任何窗）；`reason` 是给人看的原因。 */
+function eventToSource(event) {
+  const kind = String((event && event.kind) || "");
+  if (!kind) return { source: null, reason: "事件没有 kind，无法判断属于哪个窗口" };
+  if (Object.prototype.hasOwnProperty.call(EVENT_WINDOW_BY_KIND, kind)) {
+    return { source: EVENT_WINDOW_BY_KIND[kind], reason: "" };
+  }
+  return {
+    source: null,
+    reason: `kind=${kind} 没有映射到任何窗口（未分类：不进任何窗，也不兜底到工具输出）`,
+  };
+}
+
+/* 未分类事件：**计数 + 记原因**，每条原因只说一次（同一段积压会连着来几千条）。
+ * 它不进任何窗口的正文 —— 工具输出里出现一句“未分类事件”仍然是“多出来的一行”，
+ * 所以这句话走消息行（那是状态，不是日志正文）。 */
+function noteUnclassified(event, reason) {
+  const book = app.unclassified;
+  const key = String(reason || "未分类");
+  book.count += 1;
+  const seen = (book.reasons.get(key) || 0) + 1;
+  book.reasons.set(key, seen);
+  if (seen > 1) return;
+  showMessage(
+    `未分类事件：${key}（已计数 ${book.count} 条；它们不进任何窗口）`,
+    "warn", "observe",
+  );
+}
+
+/* 这一条事件把正文画进了哪一窗（机器检查用）：同一事件号**不许**进两个窗口。 */
+function noteRenderedEvent(event, source) {
+  const seq = event && event.seq;
+  if (seq === null || seq === undefined || !source) return;
+  const key = `${seq}`;
+  const previous = app.renderLedger.get(key);
+  if (previous && previous !== source) {
+    app.renderLedger.set(key, `${previous}+${source}`);
+    return;
+  }
+  app.renderLedger.set(key, source);
+}
+
+/* 五窗来源隔离的机器检查（纯函数，宿主回归与浏览器验收跑同一份实现）：
+ *   ① 设备 RX 正文出现在「工具输出」；② 解码正文出现在「工具输出」；
+ *   ③ 工具正文出现在「原始串口」；④ 同一事件号被两个窗口画过；
+ *   ⑤ 未分类事件被兜底画进某个窗（结构上已不可能，这里仍按账核对）。
+ * 返回一串人话问题（空数组 = 干净）。
+ *
+ * ⚠️ 只比**正文**：空行与短于 `DEVICE_MIN_CHARS` 的字串不参与（一个空行或单个换行
+ *    说明不了任何事，比了只会假红）。 */
+const DEVICE_MIN_CHARS = 3;
+
+function windowSourceViolations(store, ledger = app.renderLedger) {
+  const problems = [];
+  const lines = (id) => ((store && store.sources[id] && store.sources[id].lines) || []);
+  const body = (text) => String(text ?? "").trim();
+  const long = (text) => text.length >= DEVICE_MIN_CHARS;
+  const device = new Set(
+    [...lines("raw"), ...lines("decoded")].map(body).filter(long),
+  );
+  for (const text of lines("tool")) {
+    const clean = body(text);
+    if (!long(clean)) continue;
+    if (device.has(clean)) problems.push(`工具输出里有设备串口正文：${clean.slice(0, 80)}`);
+  }
+  const host = new Set(lines("tool").map(body).filter(long));
+  for (const text of lines("raw")) {
+    const clean = body(text);
+    if (host.has(clean)) problems.push(`原始串口里有工具正文：${clean.slice(0, 80)}`);
+  }
+  for (const [seq, source] of ledger || []) {
+    if (String(source).includes("+")) problems.push(`事件 ${seq} 同时画进了 ${source}`);
+  }
+  return problems;
 }
 
 /* 一条行事件该进哪一份（）：**事件自己带来源**（服务端给的 `origin`）。
@@ -10437,6 +10561,13 @@ function applyEvent(event, touched) {
     if (!defer) updateButtons();
     return;
   }
+  // 契约闸：未分类的事件**不进任何窗口**，也不允许被任何一个 `case` 兜底捡走。
+  const routed = eventToSource(event);
+  if (routed.source === null) {
+    noteUnclassified(event, routed.reason);
+    if (!defer) updateButtons();
+    return;
+  }
   const add = (id, added) => {
     if (!touched || !added) return;
     const counts = touched(store);
@@ -10569,6 +10700,8 @@ function applyEvent(event, touched) {
     default:
       break;
   }
+  // 落窗的账：正文类事件记下它进了哪一窗（同一事件号进两窗 = 串窗，能被当场抓出来）。
+  if (routed.source !== "control") noteRenderedEvent(event, routed.source);
   // 批量路径下由 `flushRealtime()` 一批调一次（按钮状态不需要每行都重算）。
   if (!defer) updateButtons();
 }
@@ -11296,6 +11429,10 @@ globalThis.PWLogWorkspace = {
     appendMany,
     feed,
     continueLine,
+    // 五窗来源隔离：事件→窗口的显式映射 + 串窗自检（纯函数，宿主回归直接驱动）。
+    eventToSource,
+    eventWindowByKind: EVENT_WINDOW_BY_KIND,
+    windowSourceViolations,
     appendEvents,
     setSourceLines,
     setSourceText,

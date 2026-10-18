@@ -993,6 +993,51 @@ def check_case_surface_and_run_state_follow_the_truth() -> None:
           "")
 
 
+def check_window_source_isolation_contract() -> None:
+    """五窗来源隔离（需求 §8.2）：一条事件的正文只属于一个窗口。
+
+    结构上不再靠 `switch` 的 `default` 兜底：先过一张显式映射表，认不得的 kind 计数 +
+    说一次原因，一个窗口都进不去。这里还守一条漂移：`applyEvent` 新加的 `case` 必须在表里登记。
+    """
+    print("\n[9] 五窗来源隔离：事件→窗口的映射与串窗自检")
+    app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    check(
+        "事件→窗口的映射是一张显式表，未分类的不进任何窗",
+        "const EVENT_WINDOW_BY_KIND = Object.freeze({" in app_js
+        and "function eventToSource(event)" in app_js
+        and "routed.source === null" in app_js
+        and "noteUnclassified(event, routed.reason)" in app_js,
+        "",
+    )
+    check(
+        "未分类事件有计数与原因（不是静默丢弃）",
+        "unclassified: { count: 0, reasons: new Map() }" in app_js
+        and "function noteUnclassified(event, reason)" in app_js
+        and "它们不进任何窗口" in app_js,
+        "",
+    )
+    check(
+        "同一事件号进了两个窗口能被抓出来",
+        "function noteRenderedEvent(event, source)" in app_js
+        and "renderLedger: new Map()" in app_js
+        and 'if (routed.source !== "control") noteRenderedEvent(event, routed.source);' in app_js
+        and "function windowSourceViolations(store, ledger = app.renderLedger)" in app_js,
+        "",
+    )
+    table_match = re.search(
+        r"const EVENT_WINDOW_BY_KIND = Object\.freeze\(\{(.*?)\n\}\);", app_js, re.S
+    )
+    mapped = set(re.findall(r'^\s*"?([a-z_.]+)"?:\s*"[a-z]+"', table_match.group(1), re.M)) if table_match else set()
+    body = app_js.split("function applyEvent(event, touched) {", 1)
+    handled = set(re.findall(r'case "([a-z_.]+)":', body[1].split("\n}\n", 1)[0])) if len(body) > 1 else set()
+    missing = sorted(handled - mapped)
+    check(
+        "每个能被处理的事件 kind 都在映射表里（新增 case 必须同时登记）",
+        bool(table_match) and bool(handled) and not missing,
+        f"未登记：{missing}",
+    )
+
+
 def check_history_list_reads_names_without_hashing() -> None:
     """历史列表只读「有哪些工件」，不为展示计算内容哈希（需求 §8.2）。
 
@@ -1051,6 +1096,7 @@ def main() -> int:
     check_sniff_transport_and_failure_modes()
     check_sniff_progress_and_the_concurrency_gate()
     check_case_surface_and_run_state_follow_the_truth()
+    check_window_source_isolation_contract()
     check_history_list_reads_names_without_hashing()
     print()
     if FAILURES:
