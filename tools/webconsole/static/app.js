@@ -13,6 +13,15 @@ const {
 const {
   SOURCES, SOURCE_IDS, SOURCE_BY_ID, SOURCE_LABEL,
 } = globalThis.PWModelSources;
+/* 事件 → 窗口的唯一映射（不认得的 kind 不进任何窗口，计数并说明原因）。 */
+const {
+  EVENT_WINDOW_BY_KIND, eventToSource, stageEventMode,
+} = globalThis.PWModelEventRoute;
+/* 阅读位置与布局的纯计算（行高取整、按网格底边修正、滚轮边界）。 */
+const {
+  READING_MIN_BODY, READING_BOTTOM_GAP, sanitizeHeadHeight, layoutIsSane,
+  readingPlan, paneChromeGap, wheelEdge,
+} = globalThis.PWModelLayout;
 
 const $ = (id) => document.getElementById(id);
 const STATE_POLL_MS = 2000;
@@ -459,51 +468,9 @@ function receivingStore() {
  * ⚠️ “哪一**屏**”（自动验证 / 实时观察 / 离线诊断）是另一件事，由 `laneStore()` 回答。
  * ⚠️ `control` = 事件是真的、但它的正文不落任何窗（状态/消息/阶段卡由别的入口画）。
  */
-const EVENT_WINDOW_BY_KIND = Object.freeze({
-  // —— 落正文的五窗 ——
-  tool: "tool",
-  raw: "raw",
-  decoded: "decoded",
-  app_events: "events",
-  test_step: "stage",
-  test_step_refs: "stage",
-  // —— 控制类（正文不落窗） ——
-  run_started: "control",
-  run_finished: "control",
-  step: "control",
-  live_test: "control",
-  "live_test.device": "control",
-  replay: "control",
-  panic: "control",
-  assert: "control",
-  info: "control",
-  error: "control",
-  observe_state: "control",
-  request_rejected: "control",
-  // —— 服务端会发、但正文不落窗的记账类 ——
-  converge: "control",
-  "host.error": "control",
-  "autotest.chunk": "control",
-  "autotest.stage": "control",
-  "autotest.device": "control",
-  "autotest.error": "control",
-  "autotest.cancelled": "control",
-  tx: "control",
-});
 
 /* 一条事件属于哪一窗（纯函数）：`{ source, reason }`。
  * `source === null` ⇒ 未分类（不进任何窗）；`reason` 是给人看的原因。 */
-function eventToSource(event) {
-  const kind = String((event && event.kind) || "");
-  if (!kind) return { source: null, reason: "事件没有 kind，无法判断属于哪个窗口" };
-  if (Object.prototype.hasOwnProperty.call(EVENT_WINDOW_BY_KIND, kind)) {
-    return { source: EVENT_WINDOW_BY_KIND[kind], reason: "" };
-  }
-  return {
-    source: null,
-    reason: `kind=${kind} 没有映射到任何窗口（未分类：不进任何窗，也不兜底到工具输出）`,
-  };
-}
 
 /* 未分类事件：**计数 + 记原因**，每条原因只说一次（同一段积压会连着来几千条）。
  * 它不进任何窗口的正文 —— 工具输出里出现一句“未分类事件”仍然是“多出来的一行”，
@@ -2853,19 +2820,11 @@ const WS_HEAD_MIN_SCROLL = 240;
  *    窗口头于是吸在屏幕中间、`阅读位` 把正文顶到 561px（上面空一大片）——
  *    用户报的“阅读位异常”就是这一路。所以两层保护：① 量出来的值先夹住；② 滚动时也重量一次
  *    （这个值的唯一用途就是滚动时的吸顶），错的值自己会好。 */
-function sanitizeHeadHeight(measured, innerHeight) {
-  const value = Math.max(0, Math.round(Number(measured) || 0));
-  const cap = Math.max(40, Math.round((Number(innerHeight) || 0) * 0.25));
-  return Math.min(value, cap);
-}
 
 /* 视口还没成形时（典型：在**后台标签页**里打开页面，`innerWidth`/`innerHeight` 是 0）
  * 量出来的几何值全是垃圾：那时窗口头会被折成 400 多 px（真值 101）。
  * ⚠️ 这种值一旦写进 CSS 变量就没人再重算 —— 用户看到的是一排矮得只剩 240 px 的窗口。
  * 所以：布局不像话时**不写**，等它成形（尺寸变化/滚动）再重量。 */
-function layoutIsSane(width, height) {
-  return Number(width) >= 200 && Number(height) >= 200;
-}
 
 /* 方便调用处：读的是当下的视口。 */
 function viewportIsLaidOut() {
@@ -3531,30 +3490,8 @@ function togglePause(id) {
  *   `paneChrome` 窗口头 + 底栏 + 边框（占屏幕但不属于“正文”的那一截）
  *   `minBody`    正文的可读下限（再压下去就不是“读”了——退回降级模式）
  */
-function readingPlan({
-  wsTop, paneOffset = 0, paneChrome = 0, innerHeight, maxScroll, rows = 1,
-  minBody = READING_MIN_BODY, bottomGap = READING_BOTTOM_GAP,
-}) {
-  const limit = Math.max(0, Math.round(maxScroll));
-  const wanted = Math.round(wsTop);
-  const target = Math.max(0, Math.min(limit, wanted));
-  const topAligned = Math.abs(target - wanted) < 1;        // 顶部真的贴住了吗
-  // 滚到 target 之后，当前窗格顶边在视口里的位置：
-  const paneTop = paneOffset + (wanted - target);
-  const available = Math.round(innerHeight - paneTop - bottomGap);
-  const body = Math.round(available - paneChrome);
-  /* ⚠️ 用户实测（2026-10-17）：**多行**布局（≤1044 px 的 2×2+1、≤640 px 的单列）下，把一个窗格
-   * 的正文拉到"一屏高"，整块工作区就成了 2～3 屏 —— 一屏里永远只看得到第一行，其余各行
-   * 被压到屏幕外面（提示却还写着"已对齐"）。所以这里只认**一行**：多行一律走③诚实降级
-   * （只对齐顶部，正文高度不动，让页面照常往下滚）。 */
-  const rowCount = Math.max(1, Math.round(Number(rows) || 1));
-  const fit = rowCount === 1 && Number.isFinite(body) && body >= minBody;
-  return { target, topAligned, available, body, fit, rows: rowCount };
-}
 
 /* 正文的可读下限（与 CSS 那条 `max(240px, …)` 同一个数）与窗格底边留的那一点。 */
-const READING_MIN_BODY = 240;
-const READING_BOTTOM_GAP = 4;
 const READING_HEIGHT_VAR = "--pane-reading-h";
 
 /* 把上次“阅读位”写下的高度撤掉（回到 CSS 的预算公式）。
@@ -3607,15 +3544,6 @@ function paneChromeHeight(pane) {
 const PANE_GAP_NODES = ["sniffCards", "sniffProgress", "fullSearch", "staleBanner", "liveTestPanel"];
 
 /* 夹在中间那几行一共多高（纯函数：给一组 `{hidden, height}`）。 */
-function paneChromeGap(parts) {
-  let total = 0;
-  for (const part of parts || []) {
-    if (!part || part.hidden) continue;
-    const height = Number(part.height);
-    if (Number.isFinite(height) && height > 0) total += height;
-  }
-  return Math.round(total);
-}
 
 function paneGapParts() {
   return PANE_GAP_NODES.map((id) => {
@@ -3839,13 +3767,6 @@ function edgeNudge(el, up) {
 /* 滚轮在当前滚动位置上该不该被拦下？
  * 返回 1 = 已经到底（还在往下滚）、-1 = 已经到顶（还在往上滚）、null = 里面还能滚。
  * 故意做成纯函数：宿主回归能直接喂几个滚动位置把边界判定钉住。 */
-function wheelEdge(state, deltaY) {
-  if (!deltaY) return null;
-  const max = state.scrollHeight - state.clientHeight;
-  if (max <= 1) return deltaY > 0 ? 1 : -1;      // 根本滚不动，也算在边界上
-  if (deltaY < 0) return state.scrollTop <= 0 ? -1 : null;
-  return state.scrollTop >= max - 1 ? 1 : null;  // 容 1 px：子像素滚动位置不会差一点就穿过去
-}
 
 /* 让一个滚动容器“到边界就别把滚动链给主页面”（反倒轻轻晃一下说明到头了）。
  *
@@ -6913,10 +6834,6 @@ function applySessionDetail(detail) {
  * - 实时观察：只认观察会话自己发的（`origin === "live"`）—— 普通串口观察不伪造阶段；
  * - 离线诊断：回放不走 SSE（直接按事件流喂 `applyTestStep`），这里不参与。
  */
-function stageEventMode(event) {
-  const origin = String((event && event.origin) || "run");
-  return origin === "live" ? "live" : "auto";
-}
 
 function applyMode() {
   const mode = app.mode;

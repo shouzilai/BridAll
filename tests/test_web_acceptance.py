@@ -1001,10 +1001,14 @@ def check_window_source_isolation_contract() -> None:
     """
     print("\n[9] 五窗来源隔离：事件→窗口的映射与串窗自检")
     app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    # 映射表与 eventToSource 住在纯模型里（`static/js/model/event-route.js`），
+    # 组合根只解构使用 —— 判据跟着模型走，同时盯住 app.js 不再长出第二份。
+    event_route_js = (CONSOLE_DIR / "static" / "js" / "model" / "event-route.js").read_text(encoding="utf-8")
     check(
         "事件→窗口的映射是一张显式表，未分类的不进任何窗",
-        "const EVENT_WINDOW_BY_KIND = Object.freeze({" in app_js
-        and "function eventToSource(event)" in app_js
+        "const EVENT_WINDOW_BY_KIND = Object.freeze({" in event_route_js
+        and "function eventToSource(event)" in event_route_js
+        and "function eventToSource(event)" not in app_js
         and "routed.source === null" in app_js
         and "noteUnclassified(event, routed.reason)" in app_js,
         "",
@@ -1025,7 +1029,7 @@ def check_window_source_isolation_contract() -> None:
         "",
     )
     table_match = re.search(
-        r"const EVENT_WINDOW_BY_KIND = Object\.freeze\(\{(.*?)\n\}\);", app_js, re.S
+        r"const EVENT_WINDOW_BY_KIND = Object\.freeze\(\{(.*?)\n\s*\}\);", event_route_js, re.S
     )
     mapped = set(re.findall(r'^\s*"?([a-z_.]+)"?:\s*"[a-z]+"', table_match.group(1), re.M)) if table_match else set()
     body = app_js.split("function applyEvent(event, touched) {", 1)
