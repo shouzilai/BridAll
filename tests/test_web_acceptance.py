@@ -692,9 +692,11 @@ def check_sniff_progress_and_the_concurrency_gate() -> None:
           and re.search(r"\.sniff-progress\s+progress\s*\{[^}]*width:\s*\d+px", style_css) is not None
           and '"sniffProgress"' in re.search(r"const PANE_GAP_NODES = \[([^\]]*)\]", app_js).group(1),
           "")
+    observe_js = (CONSOLE_DIR / "static" / "js" / "model" / "observe.js").read_text(encoding="utf-8")
     check("页面只从状态快照读进度（不读上一轮结果）",
-          "function sniffProgressModel(sniff, busy)" in app_js
-          and "sniff.last" not in app_js.split("function sniffProgressModel(sniff, busy)", 1)[1].split("\n}\n", 1)[0],
+          "function sniffProgressModel(sniff, busy)" in observe_js
+          and "function sniffProgressModel(sniff, busy)" not in app_js
+          and "sniff.last" not in observe_js.split("function sniffProgressModel(sniff, busy)", 1)[1].split("\n  }\n", 1)[0],
           "")
 
     work = Path(tempfile.mkdtemp())
@@ -958,7 +960,8 @@ def check_case_surface_and_run_state_follow_the_truth() -> None:
           and "function setSplitColumns(" not in app_js
           # 手势与几何都还在：4 根分隔条、flex 分宽度
           and index_html.count('class="split-bar"') == 4
-          and "function paneView(" in app_js and "function applyRowLayout(" in app_js,
+          and "function paneView(" in (CONSOLE_DIR / "static" / "js" / "model" / "log-store.js").read_text(encoding="utf-8")
+          and "function applyRowLayout(" in app_js,
           "")
 
     # ⚠️ 用户实测（2026-10-17）：点「阅读位」四个窗口都对上了；接着把某个窗口收成标签，

@@ -73,6 +73,69 @@ const {
   readingPlan, paneChromeGap, wheelEdge,
 } = globalThis.PWModelLayout;
 
+/* preferences：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  FONT_MIN, FONT_MAX, SPLIT_MIN, SPLIT_MAX, SPLIT_MIN_N, SPLIT_MAX_N, SPLIT_STEP, CMD_H_MIN,
+  CMD_H_DEFAULT, CMD_H_MAX, METRIC_PANE_COUNT, METRIC_PANE_DEFAULTS, METRIC_WINDOW_CHOICES,
+  METRIC_WINDOW_DEFAULT, METRIC_SCALE_CHOICES, METRIC_SCALE_DEFAULT, normalizeSplit,
+  normalizeWidths, equalWidths, equalizedWidths, normalizeCollapsed, clampCmdHeight,
+  loadMetricPanes, loadMetricWindows, loadMetricScales
+} = globalThis.PWModelPreferences;
+
+/* stream：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  SHED_FLUSH_MIN_MS, SHED_FLUSH_MAX_MS, SHED_BATCH_BUDGET_MS, SHED_QUEUE_MAX, SHED_SAMPLE_CAP,
+  EVENT_SEEN_MAX, SHED_QUEUED_KINDS, createShedState, shedAfterFlush, shedPush, shedDrain,
+  shedPercentile, shedText, shedVisible
+} = globalThis.PWModelStream;
+
+/* decode：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  DECODE_NOT_APPLICABLE, DECODE_NOT_READY, decodeNotApplicable, decodeWhyText, decodeWhySay,
+  decodeReadyToShow
+} = globalThis.PWModelDecode;
+
+/* metrics：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  HEAP_SCALE_KEYS, valueBounds, niceCeil, heapTotalOf, chartAxis, axisRange, mergeMetrics,
+  metricKeys, lastMetricPoint, resolvePaneMetric, paneMetricChoices, heapUsageReading,
+  heapUsageText, metricSeriesColor, taskStackDetail, windowSeconds, nowText, UNIT_TEXT,
+  METRIC_SERIES_COLORS, DIRECTION_TEXT, PANE_CHART_SIZE, drawChart, drawMultiChart
+} = globalThis.PWModelMetrics;
+
+/* offline：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  offlineSelectedId, omittedWindows, bundleLabel, bundleScopeNote
+} = globalThis.PWModelOffline;
+
+/* log-store：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  PANE_MIN_W, DRAG_SLOP, createViewState, createSourceState, createLogStore, setPaused,
+  setFollowState, paneView, nextExpandedForRail, visiblePanes, nextFocus, dragPaneWidths,
+  paneDragPlan
+} = globalThis.PWModelLogStore;
+
+/* command：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  TERMINAL_QUEUE_MAX, CAPTURE_PANES, CAPTURE_CLICK_SLOP, cmdRequest, utf8Length, parseHexText,
+  cmdHint, historyStep, keyDescriptor, shouldFlushTerminal, enqueueTerminalKey,
+  takeTerminalBatch, captureClickDecision, captureStateText, terminalSentText, capturingId
+} = globalThis.PWModelCommand;
+
+/* live-test：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  liveTestCaseMeta, liveTestStatusSay, liveTestStatusText, frozenLiveTestSteps, describeRawRef,
+  STEP_STATUS_TEXT
+} = globalThis.PWModelLiveTest;
+
+/* observe：纯模型（不碰 DOM / 网络 / 存储 / 定时器）。 */
+const {
+  SESSION_FILE_BY_SOURCE, sniffSkippedLine, observeStats, observeCounters, observeCombination,
+  sessionEvidenceLink, OBSERVE_TROUBLE_STATES, observeNotice, observeSelectionNote,
+  sniffCardKey, selectedSniffCard, sniffCardFirmwares, sniffCardFirmwareWhy,
+  runDeviceSelection, SNIFF_PROGRESS_STATES, sniffProgressModel
+} = globalThis.PWModelObserve;
+
 const $ = (id) => document.getElementById(id);
 const STATE_POLL_MS = 2000;
 
@@ -110,29 +173,17 @@ const STEP_ORDER = ["precheck", "build", "upload", "observe", "decode", "assert"
  * 会把它当成“读不到偏好”，于是一整类偏好（字号/字体/哪些窗口收起了筛选行）
  * 刷新后永远回到默认值，而且完全不报错（）。 */
 const PREFS_KEY = "pw.logPrefs";
-const FONT_MIN = 9;
-const FONT_MAX = 22;
 /* 分栏宽度的上下限（比例）与最大栏数：初始化读偏好、以及 normalizeSplit 都会用到，
  * 所以必须声明在 `app` 之前（踩过  的 TDZ 坑）。 */
-const SPLIT_MIN = 0.15;
-const SPLIT_MAX = 0.85;
-const SPLIT_MIN_N = 1;
 /* 最大栏数 = 窗口数（2026-10-10 起是 5：测试阶段也是一个窗口）。
  * 加窗口就要一起改这里：不然“分成 5 栏”在界面上会静默少一栏。 */
-const SPLIT_MAX_N = 5;
-const SPLIT_STEP = 0.02;
 /* 窗口最小可用宽度：拖到比它还窄就“收成标签”（而不是挤成一条缝）。
    它远大于标签条本身（--rail-w: 26px）—— 收起是为了省地方。 */
-const PANE_MIN_W = 160;
 
 /* 命令输入行（W6-1）：它长在解码窗最底端，上沿可拖。
    拖到最上（≤ CMD_H_MIN）就收成一个 ▲；点 ▲ 回到 CMD_H_DEFAULT。 */
-const CMD_H_MIN = 26;
-const CMD_H_DEFAULT = 52;
-const CMD_H_MAX = 240;
 /* 拖动分隔条要先动过这么多像素才算“在拖”：否则单击一下就会把窗口挪半个条的宽度，
    而且双击的第一下先挪动第二下就换地方了 —— 双击很难触发（用户报过）。 */
-const DRAG_SLOP = 3;
 /* 分栏菜单鼠标移开后多久才收起：鼠标从按钮挪进菜单要跨过 6 px 的缝，
    太快收起会“还没来得及点就没了”（用户报过）。 */
 const SPLIT_MENU_CLOSE_MS = 450;
@@ -188,56 +239,6 @@ function loadMode() {
 /* 页面状态。`log` 在这里初始化（不能写在文件开头：它依赖上面的 SOURCE_IDS）。 */
 /* 实时降载（L5）的**阈值**：`createShedState()` 在下面的 `app` 字面量里就被调用了，
  * 所以这几个数必须比它先初始化（`const` 不是 `function`：写在后面会掉进 TDZ）。 */
-const SHED_FLUSH_MIN_MS = 16;      // 一帧
-const SHED_FLUSH_MAX_MS = 250;     // 再慢也不许把界面拖成"卡死"
-const SHED_BATCH_BUDGET_MS = 16;   // 需求 §6：主线程单批 p95 < 16 ms
-const SHED_QUEUE_MAX = 4000;       // 队列上限（到了丢最旧的，并记账）
-const SHED_SAMPLE_CAP = 64;        // 留最近多少批的耗时（用来算 p95）
-
-/* 指标趋势的**两个窗格**（用户 2026-10-06 提）：每窗一个指标。
- * 每个窗格的高度 = 单个图表卡片的两倍（见 style.css 的 `--chart-card-h`）。
- * ⚠️ 这两个常量被 `loadPrefs()` 在**模块求值时**用到 ⇒ 必须声明在 `app` 之前（ 的 TDZ 坑）。 */
-const METRIC_PANE_COUNT = 2;
-const METRIC_PANE_DEFAULTS = [
-  // 左：堆。先看空闲量（曲线），`heap_total` 是占用读数的分母。
-  ["metric.sys.heap", "metric.sys.heap_total", "metric.sys.min_heap"],
-  // 右：默认看历史最低空闲堆（"是不是一直在往下走"）。梯子里把**左窗格的首选排到最后**：
-  // 数据稀疏时（比如只有 heap 与 heap_total 两条）两窗也尽量画不同的东西。
-  ["metric.sys.min_heap", "metric.sys.tx_stack", "metric.sys.tasks",
-   "metric.sys.heap_total", "metric.sys.heap"],
-];
-
-/** 读回两个窗格的选择：只认非空字符串，缺项补 null（旧版本没有这个字段 ⇒ 走默认梯子）。 */
-function loadMetricPanes(saved) {
-  const rows = Array.isArray(saved) ? saved : [];
-  return Array.from({ length: METRIC_PANE_COUNT }, (_, index) =>
-    typeof rows[index] === "string" && rows[index] ? rows[index] : null
-  );
-}
-
-/* 横轴的**时间窗**（用户 2026-10-07 指的"任务管理器那个效果"）：任务管理器固定画最近 60 s，
- * 新的在右边、旧的从左边掉出去。
- * ⚠️ 把整段捕获压进一格时，一次 20 s 的占用/释放只剩下十几个像素 —— 形状就糊成"锯齿纹理"了。 */
-const METRIC_WINDOW_CHOICES = [
-  { key: "60", label: "60 秒", seconds: 60 },
-  { key: "120", label: "2 分钟", seconds: 120 },
-  { key: "300", label: "5 分钟", seconds: 300 },
-  { key: "all", label: "全部", seconds: null },
-];
-const METRIC_WINDOW_DEFAULT = "60";
-
-/* 纵轴的**刻度**。任务管理器一眼能读，是因为**轴有绝对含义**（0–100%）：
- * 那条贴着底部的小尖刺才能读成"很闲"；换成"按数据自动缩放"，同一段数据会被拉满整格，
- * 大小就失去了参照。
- *   full = 0 … 满量程（堆类指标用固件报的**总量**；其余用整段捕获的最大值向上取整）
- *   auto = 按画出来的这一段缩放（看抖动形状方便，但轴每次重画都在变） */
-const METRIC_SCALE_CHOICES = [
-  { key: "full", label: "0–满量程" },
-  { key: "auto", label: "自动" },
-];
-const METRIC_SCALE_DEFAULT = "full";
-/* 这几个指标的"满量程"就是堆总量（它们的占用率才说得清）。 */
-const HEAP_SCALE_KEYS = ["metric.sys.heap", "metric.sys.min_heap"];
 
 /** 读回两个窗格的时间窗 / 刻度选择（认不出的 key ⇒ 默认值；旧版本没这两个字段也一样）。 */
 function loadPaneChoice(saved, choices, fallback) {
@@ -247,13 +248,7 @@ function loadPaneChoice(saved, choices, fallback) {
   );
 }
 
-function loadMetricWindows(saved) {
-  return loadPaneChoice(saved, METRIC_WINDOW_CHOICES, METRIC_WINDOW_DEFAULT);
-}
 
-function loadMetricScales(saved) {
-  return loadPaneChoice(saved, METRIC_SCALE_CHOICES, METRIC_SCALE_DEFAULT);
-}
 
 /* 开箱那一份阅读偏好：`app` 建好之前就要用（三份 store 在 `app` 的字面量求值期间就建好了）。
  * ⚠️ 那时读 `app.prefs` 会撞 TDZ（ 的老坑）⇒ 先取一份快照，`app.prefs` 指向同一个对象。 */
@@ -846,94 +841,9 @@ const IMPORT_POLL_MAX = 300;
 
 /* 文本 → 展示行。末尾的换行是行终止符，不是“一行空内容”。 */
 
-function createLogStore() {
-  const store = { sources: {} };
-  for (const id of SOURCE_IDS) {
-    const source = createSourceState(id);
-    /* 筛选行的开合是**阅读偏好**，而三个模式**各有一份 store** ⇒ 必须在这里（唯一的工厂）装。
-     * ⚠️ 从前只在 `buildWorkspace()` 里装 ⇒ 只有启动时那一屏吃到偏好，切到另两屏是展开的
-     *（）。开箱默认改成“收起”之后，那个不一致就看得见了：同一个页面里两屏不一样。
-     * ⚠️ 用 `BOOT_PREFS`（不是 `app.prefs`）：三份 store 是在 `app` 那个对象字面量**求值期间**
-     * 建好的，那时 `app` 还在 TDZ 里（ 的老坑）。 */
-    source.view.folded = BOOT_PREFS.folded[id] === true;
-    store.sources[id] = source;
-  }
-  return store;
-}
 
 /* 每个窗口一份完整状态：**没有**“当前源”这种全局概念，
  * 所以暂停/未读/跟随都不可能跨窗口连坐。 */
-function createSourceState(id) {
-  return {
-    id,
-    lines: [],       // 模型：这个来源收到的全部展示行（有上限）
-    baseIndex: 0,    // 已经被裁掉的行数：源行号 = baseIndex + 数组下标（裁剪后也不变）
-    /* 派生视图（工具输出）的**行身份**：与 `lines` 逐行对齐的事件号（`io_events.jsonl` 的
-     * `seq`），没有对应事件的行是 null。为什么单独一列而不是把行号当身份：这一窗的内容是
-     * 画出来的，行号与文件行号不同源（）。不是派生视图的窗（例如 run 的 tool.log、
-     * 原始串口）这一列是 null —— 它们按真行号定位，不需要也不该有事件号。 */
-    seqs: SOURCE_BY_ID[id] && SOURCE_BY_ID[id].derived ? [] : null,
-    /* 这次装载的内容是不是**派生视图**（与上面的静态声明分开：同一个窗口在三屏里
-     * 装的内容不一样 —— 回看/实时是派生视图，run 的 tool.log 不是）。 */
-    derived: SOURCE_BY_ID[id] ? SOURCE_BY_ID[id].derived === true : false,
-    /* 行号基准可与不可信、以及“这一窗根本不用行号定位”两件事要分开说（）。
-     * `derived` 的窗：`paneFrameIssue` 不再拿行号说事，而按行号给的坐标会被如实拒掉。 */
-    /* 这个基准**可信到什么程度**（）：行号列、`data-src` 与阶段定位都建立在它上面。
-     *   `exact`   = 真基准：证据装载带回了 `X-Line-Base`，或流式行事件带回了 `line_no`（已核对过）；
-     *   `assumed` = 假定 `lines[0]` 就是文件第 1 行 —— 行事件没带行号时的老行为；
-     *   `broken`  = 流里出现过缺口 ⇒ 这一窗的行号从此不再指向文件行（结论不再改）。 */
-    baseTrust: "assumed",
-    baseIssue: "",   // `broken` 时那句**人话原因**（屏幕上的拒绝理由抄它）
-    /* 这一窗的行是不是**从 SSE 接上来的**（）：证据装载/区间装载的窗不是 ——
-     * `assumed` 那条降级规则只适用于流式窗（否则"这一页曾经重放被截断"会连累
-     * 离线回看那一屏：它明明是按区间/整份装载的，行号基准随响应头回来）。 */
-    streamed: false,
-    /* L3：历史证据的**区间窗口**。非 null 时，`lines` 里装的不是整份证据，
-     * 而是 `window.ranges` 那几段字节 —— 所以统计行必须说清"看的是哪一段"。 */
-    window: null,
-    partialHead: false,   // L3：模型第 1 行的开头在没加载的区间里（不完整行，不假装完整）
-    /* 每行的**主机时刻**：键是源行号（= baseIndex + 数组下标），值是 UTC 毫秒/ISO 串。
-     * 为什么不塞进 `lines` 里：`lines` 是**纯文本**（复制、搜索、折叠、宿主回归都按字符串
-     * 对待它），往里塞对象会让那一整套逻辑悄悄换语义。
-     * 为什么用 Map 而不是第二个数组：行会被裁剪（`trimSource`），两个数组要一直对齐 ——
-     * 漏一处就会出现"时间戳串行"，而且看不出来。Map 里**没有键 = 不知道时刻**，
-     * 那种行就不显示时间（不猜、不借用上一行的时间）。 */
-    times: new Map(),
-    rendered: 0,     // 已经处理过的行数（暂停时它会落在模型后面）
-    pending: 0,      // “这个窗口里你还没看到的新行”
-    dropped: 0,      // 因上限丢弃的最旧行数
-    paused: false,   // 只冻结这一个窗口
-    followTail: true,
-    seen: new Set(), // 事件去重（SSE 重连会重发整批）
-    view: createViewState(),
-    el: null,
-    pane: null,
-    pauseBtn: null,
-    tailBtn: null,
-    pill: null,
-    pillCount: null,
-    stat: null,
-    link: null,
-    searchInput: null,
-    regexBtn: null,
-    prevBtn: null,
-    nextBtn: null,
-    hitsLabel: null,
-    errorsBtn: null,
-    // 文本排除（切片 6）：搜索行上的「排除」按钮（带已隐藏行数）+ 选项面板里的条件输入
-    excludeBtn: null,
-    excludeCount: null,
-    excludeInput: null,
-    excludeRegexBtn: null,
-    excludeHint: null,
-    menuBtn: null,
-    menu: null,
-    menuOpen: false,
-    moduleSelect: null,
-    levelButtons: [],
-    toggles: {},
-  };
-}
 
 /* “这个窗口正看着自己的尾巴” —— 只有这种情况，新行才不需要提示、才跟着滚。 */
 
@@ -982,38 +892,6 @@ function continueLine(store, id, text, ts, { lineNo = null } = {}) {
  *
  * 每个窗口一份视图状态：没有“全局搜索”，一个窗口的查询不会影响另三个。 */
 
-function createViewState() {
-  return {
-    query: "",          // 关键字或正则
-    regex: false,       // 把 query 当正则
-    error: "",         // 非空 = 查询不生效（并给出原因）
-    /* 文本排除（切片 6，需求 §7）：只改**这一窗的显示**。
-     * `excludeOff` 就是“一键停用”：停用后条件留着，方便反复对照。
-     * 条件本身不落盘（与搜索词一样是临时的阅读状态）。 */
-    exclude: "",
-    excludeRegex: false,
-    excludeOff: false,
-    excache: null,      // 排除条件的编译缓存（搜索与排除各一个槽，互不顶掉）
-    excludeStat: null,  // 已隐藏行数的缓存（增量追加只扫新来的行）
-    level: "all",       // all | E | W | I | D
-    module: "all",      // all | 具体模块名
-    errorsOnly: false,
-    lineNumbers: false,
-    // 时间戳默认打开：现场联调第一件事就是"这行是什么时候来的"（北京时间、毫秒）。
-    timestamps: true,
-    dedupe: false,      // 连续重复行折叠成一行
-    wrap: true,
-    folded: false,      // 这一窗的搜索/筛选行收起（搜索条件仍然生效）。
-                        // ⚠️ 这里是**单窗视图对象**的初值；开箱默认由 `loadPrefs()` 定（现为收起）。
-    expanded: new Set(),// 被手动展开的折叠组（组首行号）
-    hits: [],           // 可见行上的命中（按行顺序）
-    hitCursor: -1,      // 当前命中（扁平的“第几处”）
-    visible: 0,         // 当前视图里有多少行
-    tail: null,         // 增量追加时的折叠组
-    cache: { key: "", re: null, error: "" },
-    notice: "",         // 一次性提示（重建清掉选区、复制结果等）
-  };
-}
 
 /* 查询 → 正则。无效正则**当场**给出说明，而不是抛掉或悄悄当普通文本用：
  * 悄悄降级会让人以为“确实没有命中”。 */
@@ -1057,18 +935,7 @@ function createViewState() {
  * 所以这一路不再处于“冻结”状态 —— “暂停着但显示最新”是自相矛盾的。 */
 
 
-function setPaused(store, id, paused) {
-  const source = store.sources[id];
-  if (source) source.paused = Boolean(paused);
-}
 
-function setFollowState(store, id, atBottom) {
-  const source = store.sources[id];
-  if (!source) return;
-  source.followTail = Boolean(atBottom);
-  // 暂停期间即使滚到底也不清零：视图停着，那些行仍然没被看过。
-  if (source.followTail && !source.paused) source.pending = 0;
-}
 
 /* 恢复某一个窗口：只清**这一个窗口**的未读。
  * 其他三个窗口里的新行是它们自己的事 —— 它们没被看过，计数就该留着。
@@ -2230,33 +2097,9 @@ function buildMenu(store, meta) {
  * 折叠成标签只是把它变窄（内容仍在模型里），所以不会丢任何东西。 */
 
 /* 分栏状态规范化：栏数 1～4、来源去重并补齐（脏数据也不能把工作区弄空）。 */
-function normalizeSplit(split) {
-  const ids = [];
-  const raw = split && Array.isArray(split.ids) ? split.ids : [];
-  for (const id of raw) if (SOURCE_IDS.includes(id) && !ids.includes(id)) ids.push(id);
-  for (const id of SOURCE_IDS) {
-    if (ids.length >= SPLIT_MAX_N) break;
-    if (!ids.includes(id)) ids.push(id);
-  }
-  const n = Math.max(SPLIT_MIN_N, Math.min(SPLIT_MAX_N, Math.round(Number(split && split.n) || 2)));
-  // 栏位按**来源顺序**排（字典序就是屏幕上的左右顺序），所以 ids 只要是个集合。
-  const picked = SOURCE_IDS.filter((id) => ids.slice(0, n).includes(id));
-  // ⚠️ `on` 必须原样带回来：它是“现在是否处于分栏”，被 normalize 吃掉的话
-  // 点“分栏”就会变成 mode=grid（踩过：开关点了没反应）。
-  return { on: Boolean(split && split.on), n, ids: picked };
-}
 
 /* 窗口宽度权重：正数，脏数据当 1（等宽）。 */
-function normalizeWidths(widths) {
-  const out = {};
-  for (const id of SOURCE_IDS) {
-    const value = Number(widths && widths[id]);
-    out[id] = Number.isFinite(value) && value > 0 ? value : 1;
-  }
-  return out;
-}
 
-const equalWidths = () => normalizeWidths(null);
 
 /* 拖动分隔条的第一步：先看指针到底动没动。
  * ⚠️ 分两件事很重要：
@@ -2265,114 +2108,24 @@ const equalWidths = () => normalizeWidths(null);
  *   2) 不动就不算拖动 → 双击的第一下不会先挪一下（不然第二下可能已经落到别的元素上）；
  *      双击才能靠得住地触发。
  * 纯函数：宿主回归直接喂几个位移。 */
-function paneDragPlan({ startX, clientX, startLeftWidth, slop = DRAG_SLOP }) {
-  const dx = Number(clientX) - Number(startX);
-  return { moved: Number.isFinite(dx) && Math.abs(dx) >= slop, leftPx: Number(startLeftWidth) + dx };
-}
 
 /* 把指定窗口的宽度权重恢复成 1（= 均分剩余横向空间），其余窗口一点不动。
  * 双击分隔条用这个：**只均分当前展开的窗口**，收起来的标签不参与。 */
-function equalizedWidths(widths, ids) {
-  const out = normalizeWidths(widths);
-  for (const id of ids || []) if (SOURCE_IDS.includes(id)) out[id] = 1;
-  return out;
-}
 
 /* 折叠状态：布尔映射（脏数据当未折叠）。 */
-function normalizeCollapsed(collapsed) {
-  const out = {};
-  for (const id of SOURCE_IDS) out[id] = Boolean(collapsed && collapsed[id] === true);
-  return out;
-}
 
 /* 一行布局：每个窗口是“展开”还是“收成标签”。纯函数，宿主回归直接测。
  * rowMode = 宽到自己能排下四列（窄屏回到 2×2 / 单列，那时折叠与拖宽都不生效）。 */
-function paneView(layout, rowMode) {
-  const shown = {};
-  const collapsed = {};
-  for (const id of SOURCE_IDS) { shown[id] = true; collapsed[id] = false; }
-  if (!layout) return { shown, collapsed, expanded: SOURCE_IDS.slice(), rails: [] };
-  if (layout.mode === "focus" && SOURCE_IDS.includes(layout.focus)) {
-    for (const id of SOURCE_IDS) shown[id] = id === layout.focus;
-    return { shown, collapsed, expanded: [layout.focus], rails: [] };
-  }
-  if (layout.mode === "split") {
-    const chosen = normalizeSplit(layout.split).ids;
-    for (const id of SOURCE_IDS) {
-      if (rowMode) collapsed[id] = !chosen.includes(id);   // 一行：没选中的收成标签（还能点）
-      else shown[id] = chosen.includes(id);                // 窄屏：没选中的没法竖起来，直接不显示
-    }
-    return { shown, collapsed, expanded: chosen, rails: SOURCE_IDS.filter((id) => !chosen.includes(id)) };
-  }
-  // grid：四个都在，折叠是用户自己按的（但至少留一个展开）
-  if (rowMode) {
-    const map = normalizeCollapsed(layout.collapsed);
-    for (const id of SOURCE_IDS) collapsed[id] = map[id];
-    if (SOURCE_IDS.every((id) => collapsed[id])) collapsed[SOURCE_IDS[0]] = false;
-  }
-  return {
-    shown,
-    collapsed,
-    expanded: SOURCE_IDS.filter((id) => !collapsed[id]),
-    rails: SOURCE_IDS.filter((id) => collapsed[id]),
-  };
-}
 
 /* 点一个标签（把它展开）：
  * - grid：直接展开（其他窗口不动）；
  * - split：还有空位就补上；否则替换“来源顺序上最近”的那一栏（栏数不变）。 */
-function nextExpandedForRail({ mode, ids, clicked, n }) {
-  const current = SOURCE_IDS.filter((id) => (ids || []).includes(id));
-  if (!SOURCE_IDS.includes(clicked)) return current;
-  if (mode !== "split") {
-    return SOURCE_IDS.filter((id) => current.includes(id) || id === clicked);
-  }
-  const out = current.slice();
-  const want = Math.max(SPLIT_MIN_N, Math.min(SPLIT_MAX_N, Math.round(Number(n) || out.length || 2)));
-  if (out.includes(clicked)) return out;
-  if (out.length < want) out.push(clicked);
-  else {
-    const target = SOURCE_IDS.indexOf(clicked);
-    let victim = 0;
-    let best = Infinity;
-    out.forEach((id, index) => {
-      const distance = Math.abs(SOURCE_IDS.indexOf(id) - target);
-      if (distance < best) { best = distance; victim = index; }
-    });
-    out[victim] = clicked;
-  }
-  return SOURCE_IDS.filter((id) => out.includes(id));
-}
 
 /* 拖某一根分隔条：在**相邻两个窗口**之间重新分配宽度（别的窗口一点不动）。
  * 某一侧窄过 --pane-min-w（PANE_MIN_W）时不再挤它，而是判定“收成标签”。
  * 纯函数：宿主回归直接喂指针位置。 */
-function dragPaneWidths({ widths, leftId, rightId, leftPx, pairPx, minPx = PANE_MIN_W }) {
-  const out = normalizeWidths(widths);
-  if (!SOURCE_IDS.includes(leftId) || !SOURCE_IDS.includes(rightId) || leftId === rightId) {
-    return { widths: out, collapse: null };
-  }
-  if (!Number.isFinite(leftPx) || !(pairPx > 0)) return { widths: out, collapse: null };
-  if (leftPx < minPx) return { widths: out, collapse: leftId };
-  if (pairPx - leftPx < minPx) return { widths: out, collapse: rightId };
-  const total = out[leftId] + out[rightId];
-  const first = Math.max(total * 0.08, Math.min(total * 0.92, (leftPx / pairPx) * total));
-  out[leftId] = first;
-  out[rightId] = total - first;
-  return { widths: out, collapse: null };
-}
 
-function visiblePanes(layout) {
-  if (!layout) return SOURCE_IDS.slice();
-  if (layout.mode === "focus" && SOURCE_IDS.includes(layout.focus)) return [layout.focus];
-  if (layout.mode === "split") return normalizeSplit(layout.split).ids;
-  // 兜底：任何说不清的形态都回到四个窗口 —— 绝不能让工作区变成空的。
-  return SOURCE_IDS.slice();
-}
 
-function nextFocus(current, id) {
-  return current === id ? "" : id;
-}
 
 /* 这个窗口里当前的选区（不在窗口里/没有选区就返回 null）。 */
 function rangeIn(host) {
@@ -2932,11 +2685,6 @@ function expandAllPanes(store) {
 
 /* ---------------------------------------------------------------- 阅读偏好 */
 /* 命令输入行的高度：脏数据/手改的 localStorage 都要能兜住（读不出或越界就回默认值）。 */
-function clampCmdHeight(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return CMD_H_DEFAULT;
-  return Math.min(CMD_H_MAX, Math.max(CMD_H_MIN, Math.round(number)));
-}
 
 /* 字号与字体是**阅读偏好**（存在浏览器本地），改的是 CSS 变量：
  * 既不重建视图，也不碰证据。常量定义在文件靠前的位置（见 PREFS_KEY 那里的说明）。 */
@@ -3703,43 +3451,17 @@ function buildWorkspace(store) {
 /* 与 core 的 `IDENTITY_STATES` 一一对应。措辞说的是**这一次问到的结果**，
  * 不是“这块设备坏了” —— “没问到”是一类正常设备（空板/旧固件），首烧路径要从这里过。 */
 
-function sniffCardKey(card) {
-  return `${Number(card && card.num) || 0}|${String((card && card.port) || "")}`;
-}
 
 /* 本次嗅探里选中的那一张卡片（2 s 轮询会把 `app.sniff` 整块换掉，所以每次都按 key 重找）。 */
-function selectedSniffCard() {
-  const last = (app.sniff && app.sniff.last) || null;
-  const cards = last && Array.isArray(last.cards) ? last.cards : [];
-  const key = app.selectedCard ? app.selectedCard.key : "";
-  return cards.find((card) => sniffCardKey(card) === key) || null;
-}
 
 /* 服务端为这张卡片算好的**逐固件兼容性结论**（`/api/state.sniff.cards[].firmwares`）。
  * ⚠️ 它是**对象列表**（`{firmware_id, allowed, reason, first_flash, target_id, project}`），
  *    **不是** id 列表：服务端把每一份固件都列出来并给出结论与理由。
  *    页面只取 `allowed === true` 的那几份 —— 不自己比名字/协议（那是服务端的唯一判断）。 */
-function sniffCardFirmwares(card) {
-  const rows = card && Array.isArray(card.firmwares) ? card.firmwares : [];
-  // 只留 id：这个函数的用处就是"这台设备**能跑**哪几份固件"（给固件下拉框筛）。
-  return rows
-    .filter((row) => row && row.allowed === true)
-    .map((row) => String(row.firmware_id));
-}
 
 /* 这张卡片为什么不能跑：写**服务端给的理由**（不许自己编一个）。
  * 一份都不能用时，把第一条不适合的理由摆出来 —— 那是能行动的那一句
  * （“设备自报的项目是 rtthread，这份固件属于 示例项目”），“没有兼容固件”不是。 */
-function sniffCardFirmwareWhy(card) {
-  const rows = card && Array.isArray(card.firmwares) ? card.firmwares : [];
-  const ok = rows.filter((row) => row && row.allowed === true);
-  if (ok.length) {
-    const names = ok.slice(0, 2).map((row) => String(row.firmware_id));
-    return `可用固件：${names.join("、")}${ok.length > 2 ? " …" : ""}`;
-  }
-  const first = rows.find((row) => row && row.reason);
-  return first ? `不可用：${first.reason}` : "没有能用在它上面的固件";
-}
 
 function renderSniffCards() {
   const host = $("sniffCards");
@@ -3858,11 +3580,6 @@ function selectSniffCard(value) {
 }
 
 /* 这次 run 点名的设备（`{scan_seq, port}`）—— 没选就返回 null（走老路径：按目标声明的口）。 */
-function runDeviceSelection() {
-  const card = app.selectedCard;
-  if (!card) return null;
-  return { scan_seq: Number(card.scan_seq) || 0, port: String(card.port || "") };
-}
 
 /*  / D8：嗅探按钮的三态 —— 嗅探 / 正在嗅探 / 嗅探完成。
  * ⚠️ 三态**尺寸必须一样**（尺寸由 CSS 定死 min-width/height，不由文字长度决定）：
@@ -3898,52 +3615,7 @@ function setSniffButton(state) {
  *    钉住"两边算的是同一个数"。
  * ⚠️ 它只读进度快照，**不读 `last`**：上一轮的完整结果与"本轮走到哪"是两类事实。
  * ⚠️ 纯函数：喂它一个 `sniff` 块就行（模型回归与浏览器 E2E 都直接驱动它）。 */
-const SNIFF_PROGRESS_STATES = ["idle", "running", "completed", "failed"];
 
-function sniffProgressModel(sniff, busy) {
-  const block = sniff || {};
-  const row = block.progress || null;
-  const state = SNIFF_PROGRESS_STATES.includes(String(row && row.state))
-    ? String(row.state)
-    : "idle";
-  const total = Math.max(0, Number((row && row.total_ports) || 0));
-  const done = Math.min(total, Math.max(0, Number((row && row.completed_ports) || 0)));
-  const port = String((row && row.current_port) || "");
-  const percent = Math.min(100, Math.max(0, Number((row && row.percent) || 0)));
-  const reason = String((row && row.reason) || "");
-  const percentDerived = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  /* 点下去了、但服务端还没把那一轮摆到快照里（轮询 2 s 一拍）⇒ 先说“正在嗅探”，
-   * 否则用户点一下看不到任何反应。⚠️ 这不是自己编进度：它只在**本轮还没有数字**时说一句。 */
-  const waiting = state !== "running" && Boolean(busy);
-  /* 失败要有可操作的提示（不得永久停在“正在嗅探”，也不得默默回到“嗅探”）；
-   * 跑完但那句话里有事（例：结果没能落盘）**照样说出来** —— 不静默降级。 */
-  let text = "";
-  let kind = "";
-  if (state === "failed") {
-    text = reason ? `嗅探失败：${reason}` : "嗅探失败：这一轮没有正常收口";
-    kind = "fail";
-  } else if (state === "completed" && reason) {
-    text = `嗅探完成，但${reason}`;
-    kind = "warn";
-  } else if (state === "running") {
-    text = port ? `正在嗅探 ${port} · ${done}/${total}` : `正在嗅探 · ${done}/${total}`;
-  } else if (waiting) {
-    text = "正在嗅探…";
-  } else if (state === "completed") {
-    /* 跑完留一条**能看出「哪一次」**的记录：完成数 + 上一次完成时刻（北京时间，与时区无关）。
-     * ⚠️ 用户实测：连点两次嗅探，屏幕与上一轮逐字节相同 ⇒ 「看起来没重新启动」。 */
-    const parts = beijingParts(row && row.updated_utc);
-    text = [`嗅探完成 · ${done}/${total}`, parts ? parts.clock : ""].filter(Boolean).join(" · ");
-  }
-  /* ⚠️ 等待新快照时**不沿用上一轮的数字**（用户实测：刚跑完 100%，再点时条子仍然满着，
-   * 看着像「已经跑完了 / 没动」）。 */
-  const shownPercent = waiting ? 0 : percent;
-  const visible = state === "failed" || state === "running" || state === "completed" || waiting;
-  return {
-    state, total, done, port, percent: shownPercent, percentDerived,
-    reason, visible, text, kind, waiting,
-  };
-}
 
 /* 把模型画到那一行上。
  * ⚠️ 用 `visibility` 而**不是** `hidden`：这一行**常驻占着那一行的高度**（行高由 CSS 定死），
@@ -3969,11 +3641,6 @@ function renderSniffProgress() {
 /* 这一轮有没有“声明了但当前不存在”的口被跳过（用户口径 2026-10-10：不展示）。
  * 用服务端给的**结构化**字段（`last.skipped`）拼一句短话；完整那句话在证据与 `notes` 里。
  * ⚠️ 不靠解析 prose：那句长说明里有个括号与逗号，从里面抠端口号就是在自找麻烦。 */
-function sniffSkippedLine(last) {
-  const rows = (last && Array.isArray(last.skipped)) ? last.skipped.map(String).filter(Boolean) : [];
-  if (!rows.length) return "";
-  return `另有 ${rows.length} 个登记的口当前不存在：${rows.join("、")}`;
-}
 
 async function sniffDevices() {
   const button = $("sniffBtn");
@@ -4605,38 +4272,6 @@ function sayLevelRow(level) {
  *    屏幕上显示的是 `observeStatCompact()` + `#observeCounters`，而这一行的全文改挂在
  *    `#observeStat` 的 `title` 上（悬停可看全：会话号 / 证据目录 / 最近收发 / io 事件）。
  *    它仍然是**唯一**那份实现（不另写一份“详细版”），宿主回归直接喂它。 */
-function observeStats(observe) {
-  if (!observe) return "—";
-  const parts = [];
-  const session = observe.session || null;
-  const port = session ? session.port : (observe.port || null);
-  // 没连过任何设备时不要编一个端口出来（“— @ 115200”看着像已经选中了什么）。
-  parts.push(port ? `${port} @ ${observe.baud}` : `波特率 ${observe.baud}`);
-  parts.push(`状态 ${observe.state_label || observe.state}`);
-  if (session) {
-    parts.push(`会话 ${session.session_id}`);
-    parts.push(`已连接 ${formatDuration(session.connected_ms)}`);
-    // 会话时长与“本次连接时长”分开写：重连之后这两个数不一样（需求 §3.2 里的
-    // “持续时间”说的是连接，而证据文件里那份是整次观察）。
-    if (session.uptime_ms !== undefined && session.uptime_ms !== null
-      && session.uptime_ms !== session.connected_ms) {
-      parts.push(`会话时长 ${formatDuration(session.uptime_ms)}`);
-    }
-    parts.push(`RX ${session.rx_bytes} B${session.rx_chunks ? ` / ${session.rx_chunks} 次` : ""}`);
-    parts.push(`TX ${session.tx_bytes} B`);
-    parts.push(`io 事件 ${session.io_events} 条`);
-    parts.push(`打开过 ${session.opens} 次`);
-    parts.push(`证据 ${session.evidence_dir}/`);
-    const last = session.last_rx_utc || session.last_tx_utc;
-    parts.push(`最近收发 ${last ? shortTime(last) : "—"}`);
-  } else if (observe.last) {
-    parts.push(`上次会话 ${observe.last.session_id || "?"}`);
-    parts.push(`RX ${observe.last.rx_bytes} B / TX ${observe.last.tx_bytes} B`);
-    if (observe.last.evidence_dir) parts.push(`证据 ${observe.last.evidence_dir}/`);
-  }
-  if (observe.rx_error) parts.push(`读取出错 ${observe.rx_error}`);
-  return parts.join(" · ");
-}
 
 /* 控制区那一行**紧凑**状态（ / D8）：波特率 · 已连接 `M:SS` · 会话时长 · io 事件数。
  * 端口与状态在左边的 `#observeState` 上（“已连接 · COM<n>”），收发计数在 `#observeCounters` 上
@@ -4663,33 +4298,11 @@ function observeStatCompact(observe) {
 
 /* 实时计数那一格：`TX 348 B | RX 12.6 KiB`（D8）。
  * ⚠️ 显示的是**换算过的单位**，而服务端的原始字节点数进 title（两个都要看得见）。 */
-function observeCounters(observe) {
-  const session = (observe && observe.session) || null;
-  if (!session) {
-    return { tx: "TX —", rx: "RX —", title: "还没连过设备：没有计数" };
-  }
-  const rx = Number(session.rx_bytes) || 0;
-  const tx = Number(session.tx_bytes) || 0;
-  return {
-    tx: `TX ${byteUnits(tx)}`,
-    rx: `RX ${byteUnits(rx)}`,
-    title: `本次会话：TX ${tx} B · RX ${rx} B`
-      + (session.rx_chunks ? `（RX 分 ${session.rx_chunks} 次到达）` : ""),
-  };
-}
 
 /*  / D8：换设备之后**不得沿用上一台设备的说法**。
  * 实时观察的身份/能力/计数说的都是**正握着串口的那一台**；用户刚在卡片里选了另一台时，
  * 界面必须把这件事说出来（否则那些字会被读成“我刚选的这台已经连上了”）。
  * 连着的那一台与选中的那一台一致 ⇒ 不说（正常情况不必赘言）。 */
-function observeSelectionNote(observe, selectedPort = (app.selectedCard && app.selectedCard.port) || null) {
-  const connected = (observe && observe.device && observe.device.port) || null;
-  const selected = selectedPort || null;
-  if (!connected) return "";
-  if (!selected) return `下面这些说的是${connected}（当前没在卡片里选设备）`;
-  if (selected === connected) return "";
-  return `连的是 ${connected}（不是你刚选的 ${selected}）：要换设备先断开`;
-}
 
 /* 身份：**设备自报**与**主机匹配**必须分开说（需求 §6.2）。
  * 没回应的字段写"未提供"，绝不为了好看编一个值。
@@ -4783,68 +4396,14 @@ function assemblyForFirmware(firmwareId) {
  * 平台要声明 decode=supported、项目要有 token_domain、装配处要交进字典库与解码器，
  * 最后还要**精确命中字典**（知道设备是哪个 build：`INFO JSON` / `@PWINFO` 或明文横幅）。
  * 这里只转述服务端说的原因（+当前能不能触发），不自己编一套说法。 */
-function decodeWhyText(observe, level) {
-  if (!observe) return "";
-  const decode = observe.decode || {};
-  if (decode.ready) return "";   // 正在解码：这行本来就该消失
-  // 简洁档（用户口径 2026-10-10）：只留“空的 + 服务端给的原因”，那些“你可以怎么做”
-  // 的引导语属于读过一次就知道的东西，不必每时每刻占着屏。
-  const brief = sayLevel(level) === "brief";
-  // ⚠️ 服务端没给原因时**不能自己编一条**：`|| "没有匹配到字典"` 是猜的 ——
-  //    会话一空闲/断开，服务端就把原因清空（`observe.py` 里那位），于是这句凭空
-  //    断定了“没命中字典”（实测：空闲态 `reason=""`，页面却这么说）。空就只说空着。
-  const reason = decode.reason || "";
-  /* ：**先问“这一屏看的对象”要不要解码，再谈“为什么没内容”**。
-   * ⚠️ 实测（2026-10-08）：自动验证屏上写着“主机没有 build 0x93dafbcb 对应的字典” —— 那是
-   *    **实时观察**那次会话的设备，末尾还跟着“（先连接设备）”，而这一屏根本没有这个动作
-   *    ⇒ 不是措辞问题，是把别的对象的原因贴在了这一屏上。
-   * 修法：非实时观察屏**只说自己这一屏的事**；拿不到自己那份原因就不说，不借用别人的。 */
-  if (app.mode !== "live") {
-    if (screenDecodeCapability(observe) === false) {
-      // 需求 §2 点名的措词就是“当前固件未启用 Token Log”；
-      // ⚠️ 用户口径 2026-10-12：屏幕上只说「不适用」，这句完整的话与服务端给的原因进悬停。
-      return decodeNotApplicable(`当前固件未启用 Token Log`, reason, brief);
-    }
-    return "";
-  }
-  const caps = observe.capabilities || {};
-  /* 用户口径（2026-10-13）：身份未识别 ⇒ 这一条会话按**原始串口模式**工作，屏幕上说
-   * 「不适用」（服务端给的那句完整话在悬停里）。
-   * ⚠️ 只说在**还没在解码**的时候：万一连上之后身份查询回来了、字典也精确命中，
-   *    解码会自己跑起来 —— 那时 `decode.ready` 为真，上面那一行早把这句说明收掉了。 */
-  if (observe.transparent && !decode.ready) {
-    return decodeNotApplicable(
-      String(observe.transparent_reason || "身份未识别"), reason, brief);
-  }
-  if (!caps.decode) {
-    return decodeNotApplicable("这一路不做解码", reason, brief);
-  }
-  // 能力上支持解码、但字典还没到位：屏幕上只说「未就绪」（原因在悬停里）。
-  const ready = "解码：未就绪";
-  if (brief) return ready;
-  return `${ready}${reason ? `：${reason}` : ""}`
-    + (observe.state === "connected"
-      ? "（连接后会再查一次身份；命中字典之后才开始逐行解码）"
-      : "（先连接设备）");
-}
 
 /* 屏幕上的两个**状态词**（用户口径 2026-10-12：“将长篇前置条件压缩为「未就绪」或「不适用」；
  * 详细原因进入详情或后台证据”）。
  * ⚠️ 「不适用」与「未就绪」不能混：前者是**这条路本来就不做**，后者是**还没到位** ——
  *    混了就会把“不做”读成“等等就好”（这是  那一族错的老毛病）。 */
-const DECODE_NOT_APPLICABLE = "解码：不适用";
-function decodeNotApplicable(why, reason, brief) {
-  if (brief) return DECODE_NOT_APPLICABLE;
-  return `${DECODE_NOT_APPLICABLE}（${why}）${reason ? `：${reason}` : ""}`;
-}
 
 /* 解码窗底那一句的**两个版本**：屏幕上按当前档位，title 里给全量。
  * ⚠️ 两个版本走**同一个实现**（只是档位不同），不另写一份“详细版”文案。 */
-function decodeWhySay(observe, level) {
-  const text = decodeWhyText(observe, level);
-  const full = decodeWhyText(observe, "full");
-  return { text, full, level: sayLevel(level), hidden: text && full && text !== full ? 1 : 0 };
-}
 
 /* ：**当前这一屏看的固件**有没有解码能力（判据只有服务端的能力声明一条）。
  *
@@ -4871,11 +4430,6 @@ function currentRunFirmware() {
  *    （字典到位、正在解码）。页面**不自己推断**有没有字典。
  * ⚠️ 只在**翻转**时动手（`app.decodeRailFor` 记住上次那个布尔）：同一个状态下每轮轮询
  *    都施加的话，用户手动展开的窗会被反复收回去。 */
-function decodeReadyToShow(observe) {
-  if (!observe) return false;
-  return (observe.capabilities || {}).decode === true
-    && (observe.decode || {}).ready === true;
-}
 
 function applyDecodeRailDefault(observe) {
   const ready = decodeReadyToShow(observe);
@@ -4919,12 +4473,6 @@ function evidenceSession(observe) {
 /* 会话里四个窗口各自对应哪个文件（tool / decoded 不是会话文件，见注释）。
  * ⚠️ 会话目录里没有 `tool.log`（主机侧说明不落盘），`decoded.log` 要等实时解码；
  * 所以这两个窗口指向最能解释自己的那一份，而不是留一个点不动的链接。 */
-const SESSION_FILE_BY_SOURCE = {
-  tool: "manifest.json",
-  raw: "raw.bin",
-  events: "app_events.jsonl",
-  decoded: "decoded.log",
-};
 
 /* 会话证据的下载目标（纯函数）。
  *
@@ -4937,36 +4485,6 @@ const SESSION_FILE_BY_SOURCE = {
  *  - `decoded.log` 不存在 ⇒ 不给下载，标题里说清原因（字典没命中 / 还没查身份）；
  *  - `app_events.jsonl` 不存在 ⇒ 「结构化事件」窗口改指 `io_events.jsonl`（那一定存在）。
  */
-function sessionEvidenceLink(sourceId, observe, session) {
-  const decode = (observe || {}).decode || {};
-  const current = (observe || {}).session || null;
-  const live = Boolean(current && session && current.session_id === session.session_id);
-  // 服务端没给原因时只能说**事实**（这次会话没有解码）：猜“没有匹配到字典”
-  // 会在空闲/断开时变成一句误诊 —— 原因由服务端清空的那一刻，页面没资格补一个。
-  const reason = decode.reason || "这次会话没有解码";
-  const decodedLines = live
-    ? (decode.ready ? 1 : 0) || (session && session.decoded_lines) || 0
-    : (session && session.decoded_lines) || 0;
-  const eventCount = live
-    ? (decode.ready ? 1 : 0) || (session && session.app_events) || 0
-    : (session && session.app_events) || 0;
-  if (sourceId === "decoded" && !decodedLines) {
-    return { file: "", title: `本次会话没有 decoded.log：${live ? reason : "这次会话没有解码"}` };
-  }
-  if (sourceId === "events" && !eventCount) {
-    return {
-      file: "io_events.jsonl",
-      title: `本次会话没有解码，就没有 app_events.jsonl：这里下载 io 时间线（${live ? reason : "这次会话没有解码"}）`,
-    };
-  }
-  const file = SESSION_FILE_BY_SOURCE[sourceId] || "";
-  return {
-    file,
-    title: file
-      ? `下载本会话的 ${file}（原始证据：不受视图截断、暂停或去重影响）`
-      : "本次会话还没有这个文件",
-  };
-}
 
 /* 实时观察开始：四个窗口清空成“这一次会话”的内容。
  * ⚠️ 必须清空：否则窗口里会留着上一次 run 的历史行，而新来的行是这次会话的 ——
@@ -5001,46 +4519,6 @@ function startLiveWindows() {
  * 但它**不是**“设备此刻跑的那一份” —— 观察组合、解码能力与受控用例目录都只能按
  * 真命中的那一份装配（ 就是拿错了这一份）。
  */
-function observeCombination(card, targets) {
-  const rows = Array.isArray(targets) ? targets : [];
-  if (!card) {
-    return {
-      state: "", firmware_id: "", rows: [], available: false, usable: false, note: "",
-      blocked: "还没选设备：先选一个通信口（没嗅探过就点一次「嗅探」）",
-    };
-  }
-  const match = card.match || null;
-  if (!match || !match.state) {
-    return {
-      state: "", firmware_id: "", rows: [], available: false, usable: false, note: "",
-      blocked: "还没拿到这台设备的身份结论：再点一次「嗅探」",
-    };
-  }
-  const firmwareId = String(match.firmware_id || "");
-  const row = rows.find((item) => String(item.firmware_id) === firmwareId) || null;
-  const usable = Boolean(match.usable);
-  const available = usable && Boolean(row);
-  return {
-    state: String(match.state),
-    firmware_id: available ? firmwareId : "",
-    rows: available ? [row] : [],
-    available,
-    // `usable` = 服务端的匹配结论本身（“这个身份能不能定到一份固件”）。
-    // ⚠️ 自动验证那一屏靠它判断“能不能替你决定烧哪一份”（身份未知 + 多份候选 ⇒ 不替使用者挑）。
-    usable,
-    /* 唯一命中就什么都不说（用户口径 2026-10-12：这一项不显示、也不留句子）。
-     * ⚠️ 用户口径（2026-10-13）：**身份未知 / 零匹配 / 多匹配不再拦连接** ⇒ 这里也不再
-     *    摆“为什么连不了”的理由 —— 服务端那句原文里带着「多匹配 / 首次烧录声明」这类
-     *    **平台内部术语**，而屏幕上要说的事已经有自己的说法（卡片写「没问到身份」，
-     *    连上之后状态行说「身份未识别，已进入原始串口模式」）。原句仍在 API 里
-     *    （`card.match.reason`），自动验证要用的也是它。
-     * 唯一还留在屏幕上的情况是“身份匹配到了、本机却没有这一路的观察会话” —— 那是本机
-     * 台架缺登记，跟身份没关系，得说出来。 */
-    note: !usable || available
-      ? ""
-      : `服务端按这次实测身份匹配到 ${firmwareId}，而本机没有登记这一路的观察会话`,
-  };
-}
 
 /* 实时观察的“选哪一份固件”（W5）：一个 firmware 一条链 —— 换了它，设备登记、字典、
  * 解码器、身份规则与能力表一起换（服务端按 firmware 分派会话）。
@@ -5111,7 +4589,6 @@ function renderObserveTargets(observe) {
  *
  * ⚠️ 一个事实都没删：服务端那句 `observe.detail`（含“打开时未写 dtr/rts，设备没有被复位”、
  * 断开时的会话小结）现在挂在状态行的悬停上（`#observeState.title`，见 `renderObserve`）。 */
-const OBSERVE_TROUBLE_STATES = ["open_failed", "port_missing", "owned_elsewhere"];
 
 /**
  * 「身份未识别，已进入原始串口模式」（用户口径 2026-10-13）。
@@ -5121,23 +4598,6 @@ const OBSERVE_TROUBLE_STATES = ["open_failed", "port_missing", "owned_elsewhere"
  * ⚠️ 它说的是**眼前这件事**（连上了、按原始串口工作），不是“故障”，所以走 warn。
  * ⚠️ 位置只此一处：受控用例那一格屏幕上只说「不适用」（完整那句在它的悬停里）。
  */
-function observeNotice(observe) {
-  if (!observe) return { text: "", kind: "" };
-  const state = String(observe.state || "");
-  if (state === "connected" && observe.transparent) {
-    return {
-      text: String(observe.transparent_reason || ""),
-      kind: "warn",
-    };
-  }
-  if (!OBSERVE_TROUBLE_STATES.includes(state)) return { text: "", kind: "" };
-  const label = observe.state_label || state;
-  const detail = String(observe.detail || "").trim();
-  return {
-    text: detail ? `实时观察：${label} —— ${detail}` : `实时观察：${label}`,
-    kind: "warn",
-  };
-}
 
 /* 写出那一句：**每次状态变化都写**（包括空串）—— 连接/断开都把上一轮留下的
  * “打开失败…”收掉，否则屏幕上会挂着一条已经不成立的话。 */
@@ -5156,16 +4616,6 @@ function liveTestRows() {
   return block && Array.isArray(block.cases) ? block.cases : [];
 }
 
-function liveTestCaseMeta(row) {
-  const bits = [];
-  if (Number(row.expected_duration_s) > 0) bits.push(`约 ${Number(row.expected_duration_s)} s`);
-  if (row.destructive) bits.push("破坏性：要服务端逐次确认");
-  /* 用户口径（2026-10-13）：用例不可用时屏幕上只有一句人话「当前设备不支持此用例」——
-   * 它由**服务端**给（`screen_reason`，能力类的原因统一收成那一句）；具体卡在哪条能力要求
-   * （某个 `cap.`/`device.` 键）留在 API / 证据里，**页面一个都不认识**、也不许出现在这里。 */
-  if (!row.selectable) bits.push(row.screen_reason || row.reason || "现在不能选");
-  return bits.join(" · ");
-}
 
 /* 这一批跑到哪了（纯函数：模型回归直接喂它）。
  *
@@ -5174,32 +4624,8 @@ function liveTestCaseMeta(row) {
  * 而“结果”已经在每张阶段卡上（PASS/FAIL + 耗时），那句总结挂到悬停里（`full`）。
  * ⚠️ 所以 `text` 是“屏幕上那一句”，`full` 是“完整那一句”（含收口总结）——
  * 调用方不能拿 `full` 当屏幕文案（那正是用户要去掉的那一类句子）。 */
-function liveTestStatusSay(snapshot) {
-  if (!snapshot || !snapshot.batch) return { text: "", full: "" };
-  const batch = snapshot.batch;
-  const rows = Array.isArray(batch.executions) ? batch.executions : [];
-  const running = rows.find((row) => row.status === "RUNNING");
-  if (String(batch.status) === "RUNNING" && running) {
-    const stage = (running.steps || []).find((step) => step.status === "running");
-    const where = stage ? ` · ${stage.label}（${(Number(stage.duration_ms) / 1000).toFixed(1)} s）` : "";
-    const text = `跑着：${running.case_id}${where}`;
-    return { text, full: text };
-  }
-  const counts = (batch.summary && batch.summary.counts) || {};
-  const said = Object.entries(counts).map(([key, value]) => `${key} ${value}`).join(" / ");
-  const tail = [];
-  if (said) tail.push(said);
-  if (batch.reason) tail.push(batch.reason);
-  return {
-    text: "",
-    full: `已收口：${batch.result || batch.status}${tail.length ? `（${tail.join(" · ")}）` : ""}`,
-  };
-}
 
 /** 完整那一句（给悬停与证据口径用；**不再上屏幕**）。 */
-function liveTestStatusText(snapshot) {
-  return liveTestStatusSay(snapshot).full;
-}
 
 function renderLiveTests() {
   const list = $("liveTestCases");
@@ -5542,23 +4968,8 @@ function bundleHref(session) {
 
 /* 按钮上写清"导的是谁的包"：只写「导出诊断包」时，看的人分不清它指的是不是屏幕上这一份。
  * 文案在  收口时定为 `导出诊断包 · <会话号>`（RUNTIME_MODES §9.4）。 */
-function bundleLabel(target) {
-  const id = target && target.sessionId;
-  return id ? `导出诊断包 · ${id}` : "导出诊断包";
-}
 
 /* 一句话说清这个包**是什么范围**，也顺带说清它**不含什么**。 */
-function bundleScopeNote(target, viewingRun) {
-  const rows = [];
-  if (target && target.session_id) {
-    rows.push(`⚠️ 这是**会话** ${target.session_id} 的整包（不是某一次 run 的）`);
-  }
-  rows.push("它不含某一次 run 自己的报告与证据文件");
-  if (viewingRun) {
-    rows.push(`现在打开的是 run ${viewingRun}，这个按钮给的仍然是会话包`);
-  }
-  return rows.join("；");
-}
 
 /* 诊断包指向（ 收口 / RUNTIME_MODES §9.4）：**只在离线诊断**里，指这一屏正在说的
  * 那个会话（已装载的那一份优先 —— 它与四个窗口显示的内容必然一致；其次才是下拉框选中的）。
@@ -5673,10 +5084,6 @@ function renderOffline() {
  * 一个 9 月的包夹在一堆 10 月的会话里就会被截掉）。真浏览器上撞到过：
  * 四个窗口明明是导入的那次会话，面板却说"还没有选择会话"。
  */
-function offlineSelectedId(review, pickerValue) {
-  if (review && review.session_id) return String(review.session_id);
-  return String(pickerValue || "");
-}
 
 /* 读一次会话清单。**只读目录**：不打开串口、不碰设备。失败时**不动**已有清单
  *（把清单清空会让人以为“会话都不见了”）。
@@ -6098,63 +5505,14 @@ function saveCmdHistory() {
 }
 
 /* 一次发送要带的字段（纯函数：宿主回归直接驱动）。 */
-function cmdRequest(mode, text, lineEnding) {
-  return {
-    mode: mode === "hex" ? "hex" : "text",
-    text: String(text ?? ""),
-    line_ending: lineEnding || "crlf",
-  };
-}
 
-function utf8Length(text) {
-  let bytes = 0;
-  for (const char of String(text ?? "")) {
-    const code = char.codePointAt(0);
-    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
-  }
-  return bytes;
-}
 
 /* 十六进制本地预检：与服务端同一套规则（服务端仍是权威）。
  * ⚠️ 只说"行不行 + 为什么"：绝不修正、绝不部分发送。 */
-function parseHexText(text) {
-  const raw = String(text ?? "").trim();
-  if (!raw) return { ok: false, error: "十六进制输入不能为空" };
-  const cleaned = raw.replace(/0[xX]/g, "").replace(/[\s,;:]+/g, "");
-  if (!cleaned) return { ok: false, error: "十六进制输入不能为空" };
-  const bad = [...new Set(cleaned.split("").filter((char) => !/[0-9a-fA-F]/.test(char)))];
-  if (bad.length) return { ok: false, error: `不是合法的十六进制字符：${bad.join(" ")}` };
-  if (cleaned.length % 2) {
-    return { ok: false, error: `十六进制必须是偶数个字符（现在 ${cleaned.length} 个）` };
-  }
-  const hex = (cleaned.toUpperCase().match(/../g) || []).join(" ");
-  return { ok: true, hex, bytes: cleaned.length / 2, error: "" };
-}
 
 /* 输入框下面的提示：HEX 模式给出字节预览或错误；文本模式只说会发多少字节。 */
-function cmdHint(mode, text, lineEnding) {
-  const body = String(text ?? "");
-  if (!body.trim()) return { text: "", kind: "" };
-  if (mode === "hex") {
-    const parsed = parseHexText(body);
-    if (!parsed.ok) return { text: parsed.error, kind: "fail" };
-    return { text: `${parsed.bytes} 字节 · ${parsed.hex}`, kind: "ok" };
-  }
-  const ending = { cr: 1, lf: 1, crlf: 2 }[lineEnding] || 1;
-  const endingName = { cr: "CR", lf: "LF", crlf: "CRLF" }[lineEnding] || "CRLF";
-  return { text: `${utf8Length(body) + ending} 字节（正文 + ${endingName}）`, kind: "" };
-}
 
 /* ↑/↓ 翻历史：`cursor=null` 表示"还没翻"，再往下翻回到空白（与 shell 一致）。 */
-function historyStep(history, cursor, direction) {
-  const items = Array.isArray(history) ? history : [];
-  if (!items.length) return { cursor: null, text: null };
-  const base = cursor === null || cursor === undefined ? items.length : cursor;
-  const next = base + direction;
-  if (next < 0) return { cursor: 0, text: items[0] };
-  if (next >= items.length) return { cursor: null, text: "" };
-  return { cursor: next, text: items[next] };
-}
 
 function commandPort() {
   const observe = app.observe || {};
@@ -6284,61 +5642,20 @@ function wireConsoleInput() {
  *
  * 你发出去的字节在「工具输出」窗口各占一行（TX），**不进 raw.bin**：那里只有设备说的话。 */
 
-const TERMINAL_QUEUE_MAX = 200;   // 防呆上限：打字再快也不会把队列堆到天上去
-const CAPTURE_PANES = ["raw", "decoded"];   // 哪两个窗口可以直接敲键
-const CAPTURE_CLICK_SLOP = 4;     // 按下→松开的位移超过它就算"拖选"，不捕获键盘
-
-/* 一次按键 → 描述（纯函数）。 */
-function keyDescriptor(event) {
-  return {
-    key: String((event && event.key) || ""),
-    ctrl: Boolean(event && event.ctrlKey),
-    alt: Boolean(event && event.altKey),
-    shift: Boolean(event && event.shiftKey),
-    meta: Boolean(event && event.metaKey),
-  };
-}
 
 /* 现在这一批该不该发：只有“没有在飞的请求”且“队列里有东西”时才发。
  * ⚠️ 少写一个 `!inFlight` 就会出现两个请求同时在飞 —— 那正是乱序的来源。 */
-function shouldFlushTerminal(state) {
-  return Boolean(state) && !state.inFlight && state.queue.length > 0;
-}
 
-function enqueueTerminalKey(state, descriptor) {
-  state.queue.push(descriptor);
-  if (state.queue.length > TERMINAL_QUEUE_MAX) {
-    const dropped = state.queue.length - TERMINAL_QUEUE_MAX;
-    state.queue.splice(0, dropped);
-    state.dropped += dropped;
-  }
-  return state;
-}
 
 /* 取走整批（一批 = 一次 write = 一个 tx 事件）。 */
-function takeTerminalBatch(state) {
-  const batch = state.queue.splice(0, state.queue.length);
-  state.batches += batch.length ? 1 : 0;
-  return batch;
-}
 
 /* 一次鼠标操作该不该让这个窗口拿到键盘（纯函数：宿主回归直接核对它）。
  *
  * “点空白处”与“拖选”必须分得开：拿这个区别来决定要不要把键盘交给设备，
  * 否则想复制一段日志的人会发现自己的拖拽变成了往设备敲键。 */
-function captureClickDecision(input) {
-  const moved = Number(input && input.movedPx) || 0;
-  if (!(input && input.connected)) return { capture: false, why: "没在观察：没有设备可以收字节" };
-  if (input && input.hasSelection) return { capture: false, why: "这是选区：那一下是要选字" };
-  if (moved > CAPTURE_CLICK_SLOP) return { capture: false, why: "这是拖选，不是点空白" };
-  return { capture: true, why: "" };
-}
 
 /* 捕获中的那一小条状态（纯函数）。它说的是“**此刻**键盘在往设备发”，
  * 不是“这个窗口支持终端” —— 平台不识别固件能力，也就不作任何支持性承诺。 */
-function captureStateText(id) {
-  return id ? `⌨ 键盘在发字节给设备（${id === "raw" ? "原始串口" : "解码日志"}）· Esc 放开` : "";
-}
 
 function terminalState() {
   if (!app.terminal) {
@@ -6348,16 +5665,8 @@ function terminalState() {
 }
 
 /* 一次真实发送的读法：字节是证据，按键名是说明书。 */
-function terminalSentText(sent) {
-  const parts = [`已发送 ${sent.length} B`, sent.display, sent.bytes_hex];
-  if (sent.keys && sent.keys.length) parts.push(`按键 ${sent.keys.join(" ")}`);
-  return parts.join(" · ");
-}
 
 /* 现在哪个窗口拿着键盘（一次只允许一个；不是两个直敲窗口的号就是空）。 */
-function capturingId() {
-  return CAPTURE_PANES.includes(app.capture) ? app.capture : "";
-}
 
 function captureConnected() {
   return (app.observe || {}).state === "connected";
@@ -6656,10 +5965,6 @@ function renderSteps(steps) {
 /** 终态集合 —— 与后台 `step_lifecycle.TERMINAL_STATUSES` 一致（**不新增口径**）。 */
 const STEP_TERMINAL = new Set(["PASS", "FAIL", "ERROR", "SKIPPED", "CANCELLED"]);
 
-const STEP_STATUS_TEXT = {
-  pending: "等待", running: "进行中", PASS: "通过", FAIL: "失败",
-  ERROR: "出错", SKIPPED: "跳过", CANCELLED: "已取消",
-};
 
 function resetTestSteps(view = attachedView()) {
   stageBag(view).rows = new Map();
@@ -6734,28 +6039,6 @@ function applyTestRefs(row, view = attachedView()) {
  * 也**只需要**这一份：不接第二套回放器、不给会话包加成员。
  * 只有定义、还没收口（批次中途结束）的会话退回**定义**：卡片立起来、状态如实是“等待”。
  */
-function frozenLiveTestSteps(block) {
-  if (!block || typeof block !== "object") return [];
-  const rows = [];
-  for (const execution of (Array.isArray(block.executions) ? block.executions : [])) {
-    const steps = Array.isArray(execution && execution.steps) ? execution.steps : [];
-    for (const step of steps) {
-      if (step && step.case_id) rows.push(step);
-    }
-  }
-  if (rows.length) return rows;
-  for (const definition of (Array.isArray(block.definitions) ? block.definitions : [])) {
-    const steps = Array.isArray(definition && definition.steps) ? definition.steps : [];
-    for (const step of steps) {
-      if (!step || !step.stage_id) continue;
-      rows.push({
-        kind: "test_step", case_id: step.stage_id, version: step.version,
-        label: step.label, expected: step.expected, status: "pending",
-      });
-    }
-  }
-  return rows;
-}
 
 /** 把一份**冻结的阶段块**还原进某一屏的阶段窗。两个调用方共用它：
  *
@@ -6865,16 +6148,6 @@ function restoreLiveStagesFromState() {
 
 /** 卡片上只写 **raw** 的行号（需求 §8.2）：其余三类留在数据里，不上卡片（免得过载）。
  * 它们不是被丢掉 —— 定位与四窗同步会用完整的那份。 */
-function describeRawRef(row) {
-  const refs = row.evidence_refs || [];
-  const raw = refs.find((item) => item.source === "raw");
-  const others = refs.filter((item) => item.source !== "raw").length;
-  if (!raw) {
-    // 需求 §8.4：旧包/没补写的时候要说清“没有定位信息”，而不是留一个空位让人猜。
-    return others ? "定位：这一阶段没有原始串口行号" : "定位：这份证据里没有定位信息";
-  }
-  return `定位：原始串口第 ${raw.start_line}–${raw.end_line} 行`;
-}
 
 /** 一个阶段已经跑了多久（毫秒）。
  * 跑着的时候用**事件里的起点**与当前时刻现算（后台那条 `duration_ms` 是上次事件那一刻的，
@@ -7189,56 +6462,22 @@ function scheduleStepTicker(running) {
  * `--metric-pane-h`），所以这里的 viewBox 高度也跟着从 120 变成 240 —— 只把框放大
  * 而 viewBox 不动的话，`preserveAspectRatio="none"` 会把曲线拉平在更大的框里，
  * 纵向分辨率一点也没多出来。 */
-const PANE_CHART_SIZE = { width: 640, height: 240 };
 
-const DIRECTION_TEXT = { higher: "越大越安全", lower: "越小越好", neutral: "无方向" };
-const UNIT_TEXT = { count: "次" };
 
 /** 一次捕获里出现过的指标 key（顺序 = 后台 `by_key` 的插入顺序 = 项目包的指标表顺序）。 */
-function metricKeys(metrics) {
-  return Object.keys((metrics && metrics.by_key) || {});
-}
 
 /* 某个指标**最近**的一个点。堆占用读数要用"最近一次的空闲量与总量"：两者都是
  * 固件报的测量，同一次采样里读出来的，不在页面里另算一个基准。 */
-function lastMetricPoint(metrics, key) {
-  const entry = metrics && metrics.by_key ? metrics.by_key[key] : null;
-  const points = (entry && entry.points) || [];
-  return points.length ? points[points.length - 1] : null;
-}
 
 /** 一个窗格该画哪个指标：**用户选过的**这次还在就继续用它；否则按该窗格的首选梯子退；
  *  都没有就退到第一项；一个指标都没有 ⇒ null（空窗格是事实，不是错误，不编一个 key 出来）。 */
-function resolvePaneMetric(keys, preferred, current) {
-  if (current && keys.includes(current)) return current;
-  for (const key of preferred || []) {
-    if (keys.includes(key)) return key;
-  }
-  return keys.length ? keys[0] : null;
-}
 
 /** 两个窗格各自解析出来的 key（把 `app.metricPanes` 里用户选过的值当"当前值"）。 */
-function paneMetricChoices(keys, panes) {
-  return Array.from({ length: METRIC_PANE_COUNT }, (_, index) =>
-    resolvePaneMetric(keys, METRIC_PANE_DEFAULTS[index], panes ? panes[index] : null)
-  );
-}
 
 /* 堆占用读数：由固件报的**两个测量**现算（空闲堆 / 堆总量）。
  * ⚠️ 没有 `heap_total`（旧固件、或这一轮没打）就返回 null —— **不拿一个猜出来的分母**
  * 算出一个看起来像证据的百分比。它是**读数**：曲线画的仍然是固件报的字节。 */
-function heapUsageReading(metrics) {
-  const free = lastMetricPoint(metrics, "metric.sys.heap");
-  const total = lastMetricPoint(metrics, "metric.sys.heap_total");
-  if (!free || !total || !total.value) return null;
-  const used = total.value - free.value;
-  return { free: free.value, used, total: total.value, pct: (used / total.value) * 100, t_s: free.t_s };
-}
 
-function heapUsageText(reading) {
-  if (!reading) return "";
-  return `占用 ${reading.pct.toFixed(1)}%（= 1 − 空闲/总量；${reading.used} / ${reading.total} B，按最近一次的总量算）`;
-}
 
 /** 用户在某个窗格的下拉框里换了一个指标：只改**那一个**窗格，落盘并重画。 */
 function setPaneMetric(index, key) {
@@ -7301,43 +6540,7 @@ function wirePaneSelect(select, choices, current, onPick) {
  * O(n²)，页面被拖成逐行慢放，看起来像"未连接却一直在输出"。
  * 除 `by_key[*].points` 之外的字段都是服务端"到此刻为止"算出来的（比上一份新），
  * 所以直接采用 incoming 的；只把点接在底子上。 */
-function mergeMetrics(previous, incoming) {
-  if (!incoming) return previous || null;
-  if (!incoming.incremental) return incoming;
-  const base = previous && previous.schema === incoming.schema ? previous : null;
-  if (!base) return incoming;   // 没有底子：这一帧就是全部（图上从这一帧开始）
-  const byKey = {};
-  for (const [key, row] of Object.entries(incoming.by_key || {})) {
-    const before = (base.by_key || {})[key];
-    const points = before ? before.points.slice() : [];
-    const seen = new Set(points.map((point) => `${point.seq}:${point.t_s}`));
-    for (const point of row.points || []) {
-      const id = `${point.seq}:${point.t_s}`;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      points.push(point);
-    }
-    byKey[key] = { ...row, points, count: points.length, ...valueBounds(points) };
-  }
-  // 这一帧没有新点的键要接着留着（服务端只带"有新点"的键），否则曲线会突然消失。
-  for (const [key, row] of Object.entries(base.by_key || {})) {
-    if (!(key in byKey)) byKey[key] = row;
-  }
-  const total = Object.values(byKey).reduce((sum, row) => sum + (row.count || 0), 0);
-  return { ...incoming, by_key: byKey, point_count: total, merged: true };
-}
 
-function valueBounds(points) {
-  let min = null;
-  let max = null;
-  for (const point of points || []) {
-    const value = point && point.value;
-    if (typeof value !== "number") continue;
-    if (min === null || value < min) min = value;
-    if (max === null || value > max) max = value;
-  }
-  return { min, max };
-}
 
 /* 把一帧指标载荷落到图上：增量就并、整份就换。
  * ⚠️ 会话一换就不并 —— `app.metricsSession` 记的是这份图的会话号。 */
@@ -7476,89 +6679,11 @@ function renderMetrics(metrics, mode = app.mode) {
    lost data), and the x axis **accumulates** the previous segment's duration
    instead of jumping back to zero. Without that, one reboot would make the line
    zigzag leftwards, which reads as "the value fell" rather than "the clock reset". */
-function chartAxis(points, restarts, seconds) {
-  const breaks = new Set((restarts || []).map((row) => row.seq));
-  const rows = [];
-  let offset = 0;
-  let previous = null;
-  for (const point of points) {
-    if (previous !== null && point.t_s < previous) offset += previous;
-    previous = point.t_s;
-    rows.push({ point, x: offset + point.t_s });
-  }
-  // **滚动时间窗**：只画最近 `seconds` 秒（null = 全部）。
-  // ⚠️ 先按累加后的横轴裁，再分段 —— 否则跨重启的断点会落在窗口外，画出一条不存在的连接。
-  const span = Number.isFinite(seconds) ? seconds : null;
-  const last = rows.length ? rows[rows.length - 1].x : 0;
-  const kept = span === null ? rows : rows.filter((row) => row.x >= last - span);
-  const segments = [[]];
-  for (const row of kept) {
-    const tail = segments[segments.length - 1];
-    const uptimeWentBack = tail.length && row.point.t_s < tail[tail.length - 1].point.t_s;
-    if ((breaks.has(row.point.seq) || uptimeWentBack) && tail.length) segments.push([]);
-    segments[segments.length - 1].push(row);
-  }
-  return {
-    rows: kept,
-    segments: segments.filter((segment) => segment.length),
-    hidden: rows.length - kept.length,
-  };
-}
 
-const METRIC_SERIES_COLORS = [
-  "#0078d4", "#d83b01", "#107c10", "#8764b8", "#ca5010", "#038387", "#e3008c", "#4f6bed",
-  "#498205", "#c239b3", "#8e562e", "#00b7c3", "#a4262c", "#5c2d91", "#69797e", "#ffb900",
-];
 
 /** Stable across redraws: ordering comes from the project's first-seen task order. */
-function metricSeriesColor(index) {
-  return METRIC_SERIES_COLORS[index % METRIC_SERIES_COLORS.length];
-}
 
-function taskStackDetail(point) {
-  if (!point || !Number.isFinite(point.used_b) || !Number.isFinite(point.total_b)) return "";
-  return `峰值占用 ${point.used_b} / ${point.total_b} B`;
-}
 
-function drawMultiChart(entry, axes, size, range) {
-  const width = (size && size.width) || PANE_CHART_SIZE.width;
-  const height = (size && size.height) || PANE_CHART_SIZE.height;
-  const pad = { top: 10, right: 12, bottom: 16, left: 52 };
-  const all = axes.flatMap((axis) => axis.rows);
-  if (!all.length) return `<text x="${pad.left}" y="${pad.top + 20}">这个时间窗里没有点</text>`;
-  const xMin = Math.min(...all.map((row) => row.x));
-  const xMax = Math.max(...all.map((row) => row.x));
-  const usable = width - pad.left - pad.right;
-  const x = (value) => pad.left + (xMax === xMin ? usable / 2 : ((value - xMin) / (xMax - xMin)) * usable);
-  const y = (value) => pad.top + (1 - (value - range.min) / (range.max - range.min))
-    * (height - pad.top - pad.bottom);
-  const shapes = [0.25, 0.5, 0.75].map((fraction) => {
-    const gy = pad.top + fraction * (height - pad.top - pad.bottom);
-    return `<line class="grid" x1="${pad.left}" y1="${gy.toFixed(1)}" x2="${width - pad.right}" y2="${gy.toFixed(1)}"/>`;
-  });
-  axes.forEach((axis, index) => {
-    for (const segment of axis.segments) {
-      const d = segment.map((item, pointIndex) =>
-        `${pointIndex ? "L" : "M"}${x(item.x).toFixed(1)},${y(item.point.value).toFixed(1)}`).join(" ");
-      shapes.push(`<path class="line metric-series-line" data-series="${index}" style="--series-color:${metricSeriesColor(index)}" d="${d}"/>`);
-    }
-    const latest = axis.rows.length ? axis.rows[axis.rows.length - 1] : null;
-    const detail = latest ? taskStackDetail(latest.point) : "";
-    if (latest && detail) {
-      const cy = y(latest.point.value);
-      const labelY = Math.max(pad.top + 10, Math.min(height - pad.bottom - 4, cy + (cy < height / 2 ? 14 : -8)));
-      shapes.push(`<text class="metric-series-detail" data-series="${index}" x="${Math.max(pad.left + 4, x(latest.x) - 132).toFixed(1)}" y="${labelY.toFixed(1)}" style="--series-color:${metricSeriesColor(index)}">${escapeHtml(detail)}</text>`);
-    }
-  });
-  return `
-    <line class="axis" x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}"/>
-    <line class="axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}"/>
-    <text x="4" y="${pad.top + 8}">${range.max}</text>
-    <text x="4" y="${height - pad.bottom}">${range.min}</text>
-    <text x="${pad.left}" y="${height - 5}">${xMin}s</text>
-    <text x="${width - pad.right - 24}" y="${height - 5}">${xMax}s</text>
-    ${shapes.join("")}`;
-}
 
 function multiSeriesCard(entry, restarts, pane) {
   const card = document.createElement("div");
@@ -7597,117 +6722,17 @@ function multiSeriesCard(entry, restarts, pane) {
 }
 
 /** 上界抬到"好看"的数（1/2/5 × 10^n）—— 轴标签才不是 123232 这种读不出量级的值。 */
-function niceCeil(value) {
-  if (!Number.isFinite(value) || value <= 0) return 1;
-  const power = 10 ** Math.floor(Math.log10(value));
-  const scaled = value / power;
-  const step = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
-  return step * power;
-}
 
 /** 这一份捕获里固件报的堆总量（占用率的分母）。只会有微小漂移 ⇒ 取最大的那个。 */
-function heapTotalOf(metrics) {
-  const entry = metrics && metrics.by_key ? metrics.by_key["metric.sys.heap_total"] : null;
-  let top = 0;
-  for (const point of (entry && entry.points) || []) if (point.value > top) top = point.value;
-  return top;
-}
 
 /** 纵轴范围。见 `METRIC_SCALE_CHOICES` 的说明：
  *  `full` 的两条口径都**不随窗口滚动而变** —— 轴要是每重画一次就换一次，高低就没参照了。 */
-function axisRange(entry, rows, scaleKey, heapTotal) {
-  if (scaleKey === "full") {
-    if (entry.unit === "percent") return { min: 0, max: 100, source: "0–100%" };
-    const total = Number.isFinite(heapTotal) && heapTotal > 0 ? heapTotal : null;
-    if (total !== null && HEAP_SCALE_KEYS.includes(entry.key)) {
-      return { min: 0, max: total, source: "0–总量" };
-    }
-    // 没有"天然满量程"的指标：用**整段捕获**的最大值（不是窗口内的）向上取整。
-    const top = Number.isFinite(entry.max) && entry.max > 0 ? entry.max : 1;
-    return { min: 0, max: niceCeil(top), source: "0–上限" };
-  }
-  const values = rows.map((row) => row.point.value);
-  let min = values.length ? Math.min(...values) : 0;
-  let max = values.length ? Math.max(...values) : 1;
-  if (min === max) {
-    // A flat line still needs vertical room, otherwise it sits exactly on the axis
-    // and reads as "no data".
-    const span = Math.abs(min) || 1;
-    min -= span * 0.05;
-    max += span * 0.05;
-  }
-  return { min, max, source: "自动" };
-}
 
 /** 时间窗的秒数（`all` ⇒ null = 全部）。 */
-function windowSeconds(key) {
-  const row = METRIC_WINDOW_CHOICES.find((item) => item.key === key);
-  return row ? row.seconds : null;
-}
 
 /** 标题旁那个**大号当前值**。堆那一窗给占用率（和任务管理器一样：先给比例），
  *  字节数留在下面那行读数里。它只是"把最后那个点写成一行字"，不是第二条证据。 */
-function nowText(entry, rows, reading) {
-  if (reading) return `占用 ${reading.pct.toFixed(1)}%`;
-  if (!rows.length) return "";
-  const last = rows[rows.length - 1].point.value;
-  return `${last} ${UNIT_TEXT[entry.unit] || entry.unit}`;
-}
 
-function drawChart(entry, axis, size, range) {
-  const width = (size && size.width) || PANE_CHART_SIZE.width;
-  const height = (size && size.height) || PANE_CHART_SIZE.height;
-  const pad = { top: 10, right: 12, bottom: 16, left: 52 };
-  const { rows, segments } = axis;
-  if (!rows.length) {
-    // 窗口里一个点都没有 = **事实**，说清并给出下一步（不画一条空线冒充"数据到了"）。
-    return `<text x="${pad.left}" y="${pad.top + 20}">这个时间窗里没有点（把时间窗调大，或选“全部”）</text>`;
-  }
-  const min = range.min;
-  const max = range.max;
-  const xMin = rows[0].x;
-  const xMax = rows[rows.length - 1].x;
-  const usable = width - pad.left - pad.right;
-  const x = (value) => pad.left + (xMax === xMin ? usable / 2 : ((value - xMin) / (xMax - xMin)) * usable);
-  const y = (value) =>
-    pad.top + (1 - (value - min) / (max - min)) * (height - pad.top - pad.bottom);
-
-  // 水平网格（任务管理器式的浅灰横线）：没有它，中间那段高度读不出量。
-  const axisLine = (fraction) => {
-    const gy = pad.top + fraction * (height - pad.top - pad.bottom);
-    return `<line class="grid" x1="${pad.left}" y1="${gy.toFixed(1)}" `
-      + `x2="${width - pad.right}" y2="${gy.toFixed(1)}"/>`;
-  };
-  const shapes = [0.25, 0.5, 0.75].map(axisLine);
-  for (const segment of segments) {
-    const d = segment
-      .map((item, index) => `${index ? "L" : "M"}${x(item.x).toFixed(1)},${y(item.point.value).toFixed(1)}`)
-      .join(" ");
-    shapes.push(`<path class="line" d="${d}"/>`);
-    if (segment.length === 1) {
-      shapes.push(
-        `<circle class="dot" cx="${x(segment[0].x).toFixed(1)}" cy="${y(segment[0].point.value).toFixed(1)}" r="2.5"/>`
-      );
-    }
-  }
-  for (let i = 1; i < segments.length; i += 1) {
-    const previous = segments[i - 1][segments[i - 1].length - 1];
-    const next = segments[i][0];
-    const mid = (x(previous.x) + x(next.x)) / 2;
-    shapes.push(
-      `<line class="gap" x1="${mid.toFixed(1)}" y1="${pad.top}" x2="${mid.toFixed(1)}" y2="${(height - pad.bottom).toFixed(1)}"/>`
-    );
-  }
-
-  return `
-    <line class="axis" x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}"/>
-    <line class="axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}"/>
-    <text x="4" y="${pad.top + 8}">${max}</text>
-    <text x="4" y="${height - pad.bottom}">${min}</text>
-    <text x="${pad.left}" y="${height - 5}">${xMin}s</text>
-    <text x="${width - pad.right - 24}" y="${height - 5}">${xMax}s</text>
-    ${shapes.join("")}`;
-}
 
 function chartCard(metrics, entry, restarts, pane) {
   if (entry.series && entry.series.length) return multiSeriesCard(entry, restarts, pane);
@@ -8183,22 +7208,6 @@ const SESSION_EVIDENCE_FOR_PANE = {
 };
 
 /* 详情里"因为超阈值而没内联"的那些产物 → 每个窗口一份窗口描述（纯函数）。 */
-function omittedWindows(detail, names) {
-  const rows = (detail && detail.content_omitted) || [];
-  const out = {};
-  for (const [paneId, name] of Object.entries(names || {})) {
-    const row = rows.find((item) => String(item && item.name) === name);
-    if (row) {
-      out[paneId] = {
-        evidence: name,
-        url: row.url,
-        downloadUrl: row.download_url || "",
-        bytes: Number(row.bytes) || 0,
-      };
-    }
-  }
-  return out;
-}
 
 function cancelWindow(store, id) {
   const source = (store || attachedLog).sources[id];
@@ -9044,101 +8053,20 @@ async function gotoSearchHit(hit, row) {
 
 /* 只有"高频行"事件才排队。控制类事件（开始/结束/步骤/断言/崩溃）必须**立刻**生效：
  * 批处理是为了让界面跟得上，不是为了让"点一下"等半秒。 */
-const SHED_QUEUED_KINDS = new Set(["tool", "raw", "decoded", "app_events"]);
 
-function createShedState() {
-  return {
-    delayMs: SHED_FLUSH_MIN_MS,
-    batches: 0,
-    events: 0,
-    coalesced: 0,
-    slowBatches: 0,
-    lastMs: 0,
-    maxMs: 0,
-    queued: 0,
-    peakQueued: 0,
-    overflow: 0,
-    deferred: 0,
-    metricsSkipped: 0,
-    behind: 0,
-    broadcastDropped: 0,
-    // 最近几批的**实测耗时**（需求 §6 的预算是"单批 p95 < 16 ms"，那就算出 p95 来）。
-    samples: [],
-  };
-}
 
 /* 一批写完之后按**实测耗时**调整下一次的间隔（纯函数）。 */
-function shedAfterFlush(state, count, elapsedMs) {
-  const next = Object.assign({}, state);
-  const rows = Math.max(0, Number(count) || 0);
-  const spent = Math.max(0, Number(elapsedMs) || 0);
-  next.batches = state.batches + 1;
-  next.events = state.events + rows;
-  next.coalesced = state.coalesced + Math.max(0, rows - 1);
-  next.lastMs = spent;
-  next.maxMs = Math.max(state.maxMs, spent);
-  next.queued = Math.max(0, state.queued - rows);
-  next.samples = state.samples.concat([spent]).slice(-SHED_SAMPLE_CAP);
-  if (spent > SHED_BATCH_BUDGET_MS) {
-    // 超预算：下一批攒得更久一点（界面上跟着变慢，但采集与落盘一点不受影响）。
-    next.slowBatches = state.slowBatches + 1;
-    next.deferred = state.deferred + 1;
-    next.delayMs = Math.min(
-      SHED_FLUSH_MAX_MS, Math.max(SHED_FLUSH_MIN_MS * 2, state.delayMs * 2)
-    );
-  } else if (spent * 2 < SHED_BATCH_BUDGET_MS && state.delayMs > SHED_FLUSH_MIN_MS) {
-    next.delayMs = Math.max(SHED_FLUSH_MIN_MS, Math.round(state.delayMs / 2));
-  }
-  return next;
-}
 
 /* 入队。到上限就丢**最旧的**并记账 —— 丢的是"还没写进 DOM 的事件"，
  * 证据文件在服务端，仍然完整；但"丢过"这件事必须在界面上说得出。 */
-function shedPush(queue, state, items) {
-  const next = (queue || []).concat(items || []);
-  const shed = Object.assign({}, state);
-  if (next.length > SHED_QUEUE_MAX) {
-    const overflow = next.length - SHED_QUEUE_MAX;
-    next.splice(0, overflow);
-    shed.overflow = state.overflow + overflow;
-  }
-  shed.queued = next.length;
-  shed.peakQueued = Math.max(state.peakQueued, shed.queued);
-  return { queue: next, shed };
-}
 
-function shedDrain(queue, state) {
-  const items = queue || [];
-  const shed = Object.assign({}, state);
-  shed.queued = 0;
-  return { items, queue: [], shed };
-}
 
 /* 最近几批耗时的分位数（默认 p95）。样本不够就返回 0 —— 不拿两三个数冒充分位数。 */
-function shedPercentile(state, quantile) {
-  const samples = (state && state.samples) || [];
-  if (samples.length < 8) return 0;
-  const q = Math.min(0.999, Math.max(0, Number(quantile) || 0.95));
-  const sorted = samples.slice().sort((left, right) => left - right);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
-  return sorted[index];
-}
 
 /* 状态行上那句话。**降载没有发生时不写**（空话会让人以为一直在降载）；
  * 一旦有丢弃或落后，就必须写出来（含"证据文件仍然完整"这句事实）。
  * ⚠️ 用户口径 2026-10-12：屏幕上只留**结果与“数据不完整”的警告**；
  *    批处理次数/耗时/队列水位这些实现记账进悬停（它们只影响显示）。 */
-function shedText(state, running) {
-  const shed = state || {};
-  const parts = [];
-  if (shed.overflow) parts.push(`队列满丢弃 ${shed.overflow} 条（证据文件仍然完整）`);
-  if (shed.behind) parts.push(`落后服务端 ${shed.behind} 条（正在补）`);
-  if (shed.broadcastDropped) {
-    parts.push(`服务端广播挤掉过 ${shed.broadcastDropped} 条（这一页看不到它们；证据文件仍然完整）`);
-  }
-  if (!parts.length) return "";
-  return parts.join(" · ");
-}
 
 /* --------------------------------------------------------------------- SSE */
 /* 事件入口（L5）。高频行事件**先排队**、控制事件**立刻**执行：
@@ -9233,11 +8161,6 @@ function nowMs() {
  * 那不是他现在要看的东西。
  * ⚠️ 唯一的例外必须留着：**真丢过东西**（队列满丢弃 / 服务端广播挤掉）时，哪一屏都说 ——
  * 那是“你看到的不是全部”的事实，不能因为切了屏就不提。 */
-function shedVisible(state, mode) {
-  const shed = state || {};
-  if (String(mode || "") === "live") return true;
-  return Boolean(shed.overflow || shed.broadcastDropped);
-}
 
 /* 降载的记账写在状态行旁边：**没有降载时不写空话**，一旦有合并/丢弃/落后就必须写。 */
 function updateShedIndicator() {
