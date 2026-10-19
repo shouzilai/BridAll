@@ -13,6 +13,19 @@ const {
 const {
   SOURCES, SOURCE_IDS, SOURCE_BY_ID, SOURCE_LABEL,
 } = globalThis.PWModelSources;
+/* 日志筛选的纯模型：查询/排除的编译与增量记账、重复折叠、可见项推进。 */
+const {
+  MAX_QUERY, MAX_MARKS_PER_LINE, compileQuery, matchRanges, compileExclude, excludeActive,
+  lineExcluded, hiddenReason, excludedCount, linePasses, visibleItem, viewItems, viewText,
+  totalHits, locateHit,
+} = globalThis.PWModelLogFilter;
+/* 证据定位与区间窗口的纯模型（行号换算、区间合并、窗口标注、拼接计划）。 */
+const {
+  FALLBACK_TAIL_BYTES, byteText, mergeByteRanges, tailByteRange, previousByteRange,
+  windowContract, parseContentRangeTotal, windowNote, prependPlan, olderMergePlan,
+  lineBaseFromHeader, lineBaseIndex, evidenceLineIndex, seqRowIndex, locatePlan,
+} = globalThis.PWModelLocate;
+
 /* 事件 → 窗口的唯一映射（不认得的 kind 不进任何窗口，计数并说明原因）。 */
 const {
   EVENT_WINDOW_BY_KIND, eventToSource, stageEventMode,
@@ -767,109 +780,26 @@ const MAX_LINES = 5000;
  * 3. **边界行只标记、不假装完整**：字节起点落在行中间时，顶上那一行标成不完整，
  *    绝不把它当成一条完整的证据行（需求 PERF-HIST-05）。
  */
-const FALLBACK_TAIL_BYTES = 2 * 1024 * 1024;
 
 /* 字节数 → 人话。证据用 1024 进制（写成 MiB 而不是 MB，免得和十进制混）。 */
-function byteText(bytes) {
-  const value = Number(bytes);
-  if (!Number.isFinite(value) || value < 0) return "—";
-  if (value < 1024) return `${Math.round(value)} B`;
-  const units = ["KiB", "MiB", "GiB", "TiB"];
-  let size = value / 1024;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size < 10 ? size.toFixed(1) : Math.round(size)} ${units[unit]}`;
-}
 
 /* 区间合并：**重叠或相接**都合并（连着就是同一段字节）。
  * ⚠️ 与 core 的 `large_evidence.merge_ranges()` 同一条规则：中间缺至少一个字节的两段
  * 绝不合并 —— 合并会把"这里没加载"说成"已加载"，而页面正是拿它告诉用户看的是哪一段。 */
-function mergeByteRanges(ranges) {
-  const rows = [];
-  for (const item of ranges || []) {
-    const start = Number(item && item[0]);
-    const end = Number(item && item[1]);
-    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) rows.push([start, end]);
-  }
-  rows.sort((left, right) => left[0] - right[0]);
-  const merged = [];
-  for (const row of rows) {
-    const last = merged[merged.length - 1];
-    if (last && row[0] <= last[1] + 1) last[1] = Math.max(last[1], row[1]);
-    else merged.push([row[0], row[1]]);
-  }
-  return merged;
-}
 
 /* 尾部窗口：最后 `bytes` 字节（文件更小就整份）。0 字节 ⇒ null。 */
-function tailByteRange(totalBytes, bytes) {
-  const total = Number(totalBytes);
-  if (!Number.isFinite(total) || total <= 0) return null;
-  const width = Math.max(1, Math.min(Number(bytes) || 0, total));
-  return [total - width, total - 1];
-}
 
 /* 向前翻一页：已加载区间里**最靠前那一段之前**的一段。到头（已经在 0 字节）⇒ null。 */
-function previousByteRange(ranges, bytes) {
-  const merged = mergeByteRanges(ranges);
-  if (!merged.length || merged[0][0] <= 0) return null;
-  const end = merged[0][0] - 1;
-  const start = Math.max(0, end - Math.max(1, Number(bytes) || 0) + 1);
-  return [start, end];
-}
 
 /* 服务端给的契约：尾部窗口大小 + 它的**出处**。 */
-function windowContract(detail) {
-  const contract = (detail && detail.evidence_contract) || null;
-  const tail = Number(contract && contract.tail_window_bytes);
-  if (Number.isFinite(tail) && tail > 0) return { tailBytes: tail, from: "server", contract };
-  return { tailBytes: FALLBACK_TAIL_BYTES, from: "fallback", contract: null };
-}
 
 /* 从 `Content-Range` 里取文件总大小：正常形式是 `bytes a-b/total`；
  * 区间不可能满足时服务端发的是「星号 + 斜杠 + total」那一种 —— 两种都要认。
  * ⚠️ 这条注释里**不能**直接写出那两个字面字符：注释会在那里提前结束（踩过一次）。 */
-function parseContentRangeTotal(value) {
-  const match = /\/(\d+)\s*$/.exec(String(value || ""));
-  return match ? Number(match[1]) : null;
-}
 
 /* 区间窗口的**诚实标注**（纯函数，宿主回归直接核对文字）：
  * 总大小 / 已加载字节 / 省略方向 / 顶行是否不完整。
  * 一句也不许把"只加载了尾部一段"说成"完整日志"（需求 §3.3）。 */
-function windowNote(win) {
-  if (!win || !Number(win.totalBytes)) return null;
-  const merged = mergeByteRanges(win.ranges);
-  const loaded = merged.reduce((sum, row) => sum + (row[1] - row[0] + 1), 0);
-  const head = merged.length ? merged[0][0] : 0;
-  const last = merged.length ? merged[merged.length - 1][1] : 0;
-  const omittedBefore = head;
-  const omittedAfter = Math.max(0, win.totalBytes - 1 - last);
-  const whole = merged.length > 0 && omittedBefore === 0 && omittedAfter === 0;
-  const span = merged
-    .map((row) => (row[0] === row[1] ? `${row[0]}` : `${row[0]}–${row[1]}`))
-    .join(",");
-  const label = win.evidence || "这份证据";
-  const short = whole
-    ? `全部 ${byteText(win.totalBytes)}`
-    : [
-        `${byteText(loaded)}/${byteText(win.totalBytes)}`,
-        omittedBefore ? `省前 ${byteText(omittedBefore)}` : "",
-        omittedAfter ? `省后 ${byteText(omittedAfter)}` : "",
-        win.headPartial ? "顶行不完整" : "",
-      ].filter(Boolean).join(" · ");
-  const long = whole
-    ? `${label} 已全部加载（${byteText(win.totalBytes)}）`
-    : `${label} 共 ${byteText(win.totalBytes)}，当前只加载了 ${byteText(loaded)}`
-      + (omittedBefore ? `；前面还有 ${byteText(omittedBefore)} 没加载，点「向前加载」接着往上看` : "")
-      + (omittedAfter ? `；后面还有 ${byteText(omittedAfter)} 没加载` : "")
-      + (win.headPartial ? "；最上面那一行的开头在没加载的区间里，它不完整" : "")
-      + "。下载拿到的始终是完整文件。";
-  return { short, long, loaded, omittedBefore, omittedAfter, whole, ranges: merged };
-}
 
 /* 把"更早的一段"接到模型前面（纯函数：不碰 DOM，也不改传进来的数组）。
  *
@@ -880,21 +810,6 @@ function windowNote(win) {
  *
  * ⚠️ 拼接是**必须**的：相邻两段之间没有重叠，所以更早那一段的最后一个片段正好是
  * 模型第一行的开头 —— 不拼就是把同一行显示成两条，而且两条都不完整。 */
-function prependPlan(modelLines, chunkText, startByte) {
-  const lines = modelLines || [];
-  const text = String(chunkText ?? "").replace(/\r\n?/g, "\n");
-  if (!text) return { head: [], headPartial: false, stitchWith: -1, dangling: "" };
-  const pieces = text.split("\n");
-  let dangling = "";
-  if (pieces[pieces.length - 1] === "") pieces.pop();
-  else if (lines.length) dangling = pieces.pop();
-  return {
-    head: pieces,
-    headPartial: pieces.length > 0 && Number(startByte) > 0,
-    stitchWith: dangling ? 0 : -1,
-    dangling,
-  };
-}
 
 /* 决定"更早的一段"到底怎么接上去（纯函数，宿主回归直接驱动）。
  *
@@ -904,18 +819,6 @@ function prependPlan(modelLines, chunkText, startByte) {
  * 那时候再把尾部片段拼到"现在的第一行"上，就是给一行**凭空加一个它没有的开头**
  * （真机上看到的是 `[I][I][demo] line=…`）。拼不成时那个片段只能如实留着。
  */
-function olderMergePlan(modelLines, modelBaseIndex, chunkText, startByte) {
-  const plan = prependPlan(modelLines, chunkText, startByte);
-  const stitchable = plan.stitchWith === 0 && Number(modelBaseIndex) === 0;
-  const head = plan.head.slice();
-  if (plan.dangling && !stitchable) head.push(plan.dangling);
-  return {
-    head,
-    stitch: stitchable ? plan.dangling : "",
-    headPartial: plan.headPartial,
-    stitched: stitchable,
-  };
-}
 
 const stripAnsi = (text) => String(text ?? "").replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
@@ -1098,8 +1001,6 @@ function continueLine(store, id, text, ts, { lineNo = null } = {}) {
  * 不会改写 source.lines，更不会碰 runs/ 里的证据文件；源行号也不随过滤变化。
  *
  * 每个窗口一份视图状态：没有“全局搜索”，一个窗口的查询不会影响另三个。 */
-const MAX_QUERY = 200;
-const MAX_MARKS_PER_LINE = 200;
 
 function createViewState() {
   return {
@@ -1136,182 +1037,41 @@ function createViewState() {
 
 /* 查询 → 正则。无效正则**当场**给出说明，而不是抛掉或悄悄当普通文本用：
  * 悄悄降级会让人以为“确实没有命中”。 */
-function compileQuery(view) {
-  const key = `${view.regex ? "re" : "lit"}:${view.query}`;
-  if (view.cache.key === key) return view.cache;
-  const result = { key, re: null, error: "" };
-  if (view.query) {
-    if (view.query.length > MAX_QUERY) {
-      result.error = `查询过长：${view.query.length} 字符（上限 ${MAX_QUERY}）`;
-    } else {
-      try {
-        result.re = new RegExp(view.regex ? view.query : escapeRegExp(view.query), "g");
-      } catch (error) {
-        result.error = `正则无效：${error.message}`;
-      }
-    }
-  }
-  view.cache = result;
-  return result;
-}
 
 /* 一行里的命中区间。每行设上限：一行里几千个命中只说明查询没意义，
  * 画出来只会把浏览器拖死（性能要求写在不卡死，而不是“能画出来”）。 */
-function matchRanges(re, text) {
-  if (!re) return [];
-  const ranges = [];
-  re.lastIndex = 0;
-  let match = re.exec(text);
-  while (match) {
-    if (match[0] === "") re.lastIndex += 1;
-    else {
-      ranges.push([match.index, match.index + match[0].length]);
-      if (ranges.length >= MAX_MARKS_PER_LINE) break;
-    }
-    match = re.exec(text);
-  }
-  return ranges;
-}
 
 /* 排除条件 → 正则。规则与搜索**完全一致**（无效正则当场说明，不悄悄降级）：
  * 悄悄把正则当普通文本用，会让人以为“确实没有命中”。
  * 单独一个缓存槽：搜索与排除各改各的，不能互相把对方的编译结果顶掉。 */
-function compileExclude(view) {
-  const key = `${view.excludeRegex ? "re" : "lit"}:${view.exclude}`;
-  if (view.excache && view.excache.key === key) return view.excache;
-  const result = { key, re: null, error: "" };
-  if (view.exclude) {
-    if (view.exclude.length > MAX_QUERY) {
-      result.error = `排除条件过长：${view.exclude.length} 字符（上限 ${MAX_QUERY}）`;
-    } else {
-      try {
-        result.re = new RegExp(view.excludeRegex ? view.exclude : escapeRegExp(view.exclude), "g");
-      } catch (error) {
-        result.error = `排除的正则无效：${error.message}`;
-      }
-    }
-  }
-  view.excache = result;
-  return result;
-}
 
 /* 排除是否在生效：填了条件、没有一键停用、而且条件本身是有效的。
  * ⚠️ 正则无效时**不生效**（既不是“全部隐藏”，也不是“偷偷当普通文本”）：
  * 那两种都会让人以为“确实没有匹配”，而真正的原因是一个写错的正则。 */
-function excludeActive(view) {
-  if (!view.exclude || view.excludeOff) return false;
-  return !compileExclude(view).error;
-}
 
 /* 这一行是不是被排除掉了（关键词或正则，规则与搜索一致）。 */
-function lineExcluded(view, text) {
-  const { re } = compileExclude(view);
-  if (!re) return false;
-  re.lastIndex = 0;
-  return re.test(String(text ?? ""));
-}
 
 /* 这一行为什么看不见：null = 显示；"filter" = 级别/模块/错误过滤；"exclude" = 文本排除。
  * 两种“看不见”**必须分开**：被排除的行要计数并说清楚（需求 §7），被过滤掉的行不用。 */
-function hiddenReason(view, text) {
-  if (!linePasses(view, text)) return "filter";
-  if (excludeActive(view) && lineExcluded(view, text)) return "exclude";
-  return null;
-}
 
 /* 被排除掉的行数（显示用）。它是**算出来**的，不是一个只增不减的计数器：
  * 增量追加只扫新来的行，条件变了或线被裁剪过（baseIndex 变了）才重扫。
  * 一个累加计数器在裁剪之后会永远偏高 —— 而这个数是要给人看的。 */
-function excludedCount(source) {
-  const view = source.view;
-  const active = excludeActive(view);
-  const signature = `${view.excludeRegex ? "re" : "lit"}:${view.exclude}`;
-  const cache = view.excludeStat;
-  const extend = Boolean(cache) && cache.baseIndex === source.baseIndex
-    && cache.signature === signature && cache.active === active
-    && cache.scanned <= source.lines.length;
-  let count = extend && active ? cache.count : 0;
-  let scanned = extend ? cache.scanned : 0;
-  if (active) {
-    for (let index = scanned; index < source.lines.length; index += 1) {
-      if (lineExcluded(view, source.lines[index])) count += 1;
-    }
-    scanned = source.lines.length;
-  } else {
-    count = 0;
-    scanned = 0;
-  }
-  view.excludeStat = { baseIndex: source.baseIndex, signature, active, count, scanned };
-  return count;
-}
 
-function linePasses(view, text) {
-  const value = String(text ?? "");
-  if (view.errorsOnly && !isErrorLine(value)) return false;
-  if (view.level !== "all" || view.module !== "all") {
-    const { level, module } = parseLine(value);
-    if (view.level !== "all" && level !== view.level) return false;
-    if (view.module !== "all" && module !== view.module) return false;
-  }
-  return true;
-}
 
 /* 下一个可见项 —— 增量追加与整体重建**共用这一条规则**，所以两条路径不可能走散。
  * 返回 null = 这一行被过滤掉；merged = 并进了上一条折叠组（重复内容不再画）。
  *
  * 展开状态要**沿整组传递**：只把组首标成“摊开”不够，否则组的第 2 行会重新把
  * 第 3 行并进去 —— 看起来就像“只展开了第一行”。 */
-function visibleItem(source, index, tail) {
-  const view = source.view;
-  const text = source.lines[index];
-  // 看不见的行一个节点也不建。**为什么**看不见由 `hiddenReason()` 说清楚
-  //（被排除掉的要计数、要能一键停用，需求 §7）。
-  if (hiddenReason(view, text)) return null;
-  const sameAsTail = Boolean(tail) && tail.text === text;
-  const expanded = sameAsTail ? tail.expanded : view.expanded.has(index);
-  if (view.dedupe && sameAsTail && !tail.expanded) {
-    return { index, text, ranges: [], repeats: tail.repeats + 1, merged: true };
-  }
-  const { re } = compileQuery(view);
-  return { index, text, ranges: matchRanges(re, text), repeats: 1, merged: false, expanded };
-}
 
 /* 整份派生视图（可见项清单）。复制与宿主回归都拿它当“视图应该长什么样”的参照。 */
-function viewItems(source) {
-  const items = [];
-  let tail = null;
-  for (let index = 0; index < source.lines.length; index += 1) {
-    const item = visibleItem(source, index, tail);
-    if (!item) continue;
-    if (item.merged) {
-      tail.repeats = item.repeats;
-      continue;
-    }
-    items.push(item);
-    tail = item;
-  }
-  return items;
-}
 
 /* 复制/导出用的文本 = **看得见的那些行**：没有 UI 标记，也没有隐藏行。
  * 折叠组只留代表行（重复的那些行确实没显示出来）。 */
-function viewText(source) {
-  return viewItems(source).map((item) => source.lines[item.index]).join("\n");
-}
 
-function totalHits(source) {
-  return source.view.hits.reduce((sum, hit) => sum + hit.ranges.length, 0);
-}
 
 /* 扁平的第 n 处命中 → 哪一行、这一行的第几个。 */
-function locateHit(hits, cursor) {
-  let remaining = cursor;
-  for (const hit of hits) {
-    if (remaining < hit.ranges.length) return { index: hit.index, slot: remaining };
-    remaining -= hit.ranges.length;
-  }
-  return null;
-}
 
 /* 整体装载（历史 run、切换 run、清空）：视图被权威证据替换，
  * 所以这一路不再处于“冻结”状态 —— “暂停着但显示最新”是自相矛盾的。 */
@@ -9275,21 +9035,11 @@ function planHeadPartial(range, win) {
  * 面板左边那列跟着「向前加载」一路涨（每窗 +约 3 万），
  * 跟搜索结果里那个**文件真行号**对不上（实测：字节 321683181 是第 4515116 行，
  * 面板却显示 32792）。小文件看不见这个洞：整份装载时 `baseIndex` 恒为 0，恰好就是真行号。 */
-function lineBaseFromHeader(value) {
-  const raw = String(value == null ? "" : value).trim();
-  if (!raw) return null;
-  const number = Number(raw);
-  return Number.isFinite(number) && number >= 1 ? Math.floor(number) : null;
-}
 
 /* 上面那个数是**1 基行号**，而面板用的是 0 基的 `baseIndex`（行号 = baseIndex + 下标 + 1）。
  * ⚠️ 差一就是“面板第一行总比文件行号大 1”：我第一版就是这样漏了一步，
  *    真浏览器上量一下就看出来了（面板首行 4514679、真值 4514678）。
  */
-function lineBaseIndex(value) {
-  const line = lineBaseFromHeader(value);
-  return line === null ? null : line - 1;
-}
 
 async function loadWindowRange(id, range, { prepend = false, replace = false, lines = null } = {}) {
   const source = app.log.sources[id];
@@ -9565,24 +9315,11 @@ const PANE_FOR_EVIDENCE_REF = { tool: "tool", raw: "raw", decoded: "decoded", ap
  *    下标 = line - 1 - baseIndex（用户口径 2026-10-13）。少减那个 1 就整体**差一行**：
  *    要定位第 1～13 行，实际圈的是第 2～14 行 —— 看起来就是“点定位停在启动日志首行”。
  * 下标 < 0 = 这一行还没装载 / 不在这一段里（调用方跳过它，不假装标上了）。 */
-function evidenceLineIndex(line, baseIndex) {
-  const value = Number(line);
-  if (!Number.isFinite(value)) return -1;
-  return Math.floor(value) - 1 - (Number(baseIndex) || 0);
-}
 
 /* 事件号 → 行下标（纯函数，宿主回归直接驱它）。
  *
  * 派生视图（工具输出）的行**身份**就是它来自的那条 io 事件（）：`seqs` 与
  * `lines` 逐行对齐。找不到返回 **-1**（不返回 0 —— 那会假装第一条就是它）。 */
-function seqRowIndex(seqs, eventSeq) {
-  const wanted = Math.floor(Number(eventSeq));
-  if (!Array.isArray(seqs) || !Number.isFinite(wanted) || wanted < 1) return -1;
-  for (let index = 0; index < seqs.length; index += 1) {
-    if (Number(seqs[index]) === wanted) return index;
-  }
-  return -1;
-}
 
 /* 一条证据引用 → 定位计划（纯函数，宿主回归直接驱动它）：要轻微高亮的**区间**
  * 与要滚到窗口中间的**中心锚点**，两串都是 0 基下标。
@@ -9593,14 +9330,6 @@ function seqRowIndex(seqs, eventSeq) {
  *   ③ 区间只有一行时 ② 就是那一行。
  * 坐标无效（行号不是数字 / 小于 1 / 末行在首行之前）返回 `null`：**什么也不做** ——
  * 不得把用户带到与这一段证据无关的位置。 */
-function locatePlan(ref, baseIndex) {
-  const first = evidenceLineIndex(ref && ref.start_line, baseIndex);
-  const last = evidenceLineIndex(ref && ref.end_line, baseIndex);
-  if (first < 0 || last < first) return null;
-  let anchor = evidenceLineIndex(ref && ref.anchor_line, baseIndex);
-  if (!(anchor >= first && anchor <= last)) anchor = last;
-  return { first, last, anchor };
-}
 
 /** 点阶段卡上的“定位”：四类证据窗各自滚到该阶段的行区间并高亮（T6 / 需求 §8.2、§8.3）。
  *
