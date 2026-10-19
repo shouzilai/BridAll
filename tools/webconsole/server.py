@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+import gzip
 import json
 import os
 from pathlib import Path
@@ -132,7 +133,7 @@ def static_stamp(static_dir: Path = STATIC_DIR) -> str:
     """
     items: list[str] = []
     try:
-        paths = sorted(static_dir.glob("*"))
+        paths = sorted(static_dir.rglob("*"))
     except OSError:
         return "missing"
     for path in paths:
@@ -140,7 +141,11 @@ def static_stamp(static_dir: Path = STATIC_DIR) -> str:
             info = path.stat()
         except OSError:  # 探到一半被删：下一次轮询就准了
             continue
-        items.append(f"{path.name}:{info.st_size}:{info.st_mtime_ns}")
+        try:
+            label = path.relative_to(static_dir).as_posix()
+        except ValueError:
+            label = path.name
+        items.append(f"{label}:{info.st_size}:{info.st_mtime_ns}")
     return f"{len(items)}|" + "|".join(items)
 
 STATIC_TYPES = {
@@ -150,6 +155,27 @@ STATIC_TYPES = {
     ".svg": "image/svg+xml",
     ".json": "application/json; charset=utf-8",
 }
+
+# 文本类静态资源可以压着发：只压“认得出来是文本”的扩展名、且压完真的更小才用。
+# 拆成多个文件之后总字节变多，压缩把它补回来；`Cache-Control` 仍是 `no-store`
+# （调试台改完 `static/*` 刷新就该看到新的，缓存反而是障碍）。
+PACKABLE_SUFFIXES = {".html", ".js", ".css", ".svg", ".json"}
+PACK_MIN_BYTES = 1024
+_PACKED_CACHE: dict[tuple[str, int, int], bytes] = {}
+_PACKED_CACHE_MAX = 64
+
+
+def pack_static(body: bytes, suffix: str) -> bytes | None:
+    """把一份静态资源压成 gzip；返回 None 表示“不值得压/不该压”。
+
+    纯函数（不碰磁盘、不看时间），宿主回归可以直接喂它。
+    """
+    if suffix.lower() not in PACKABLE_SUFFIXES:
+        return None
+    if len(body) < PACK_MIN_BYTES:
+        return None
+    packed = gzip.compress(body, 6)
+    return packed if len(packed) < len(body) else None
 
 EVIDENCE_TYPES = {
     "raw.bin": "application/octet-stream",
@@ -363,11 +389,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         *,
         status: int = 200,
         download_name: str | None = None,
+        content_encoding: str | None = None,
     ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if content_encoding:
+            self.send_header("Content-Encoding", content_encoding)
         if download_name:
             self.send_header(
                 "Content-Disposition", f'attachment; filename="{download_name}"'
@@ -490,8 +519,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if path == "/doctor":
                 # 体检页（D5）：一个**只读报告视图**，与工作台分开（工作台是日志工具）。
                 return self._send_static("doctor.html")
-            if segment[:1] == ["static"] and len(segment) == 2:
-                return self._send_static(segment[1])
+            if segment[:1] == ["static"] and len(segment) >= 2:
+                return self._send_static("/".join(segment[1:]))
             if path == "/api/health":
                 return self._send_json({"ok": True})
             if path == "/api/doctor":
@@ -1109,13 +1138,47 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------------- statics
     def _send_static(self, name: str) -> None:
-        if "/" in name or "\\" in name or name.startswith("."):
+        """静态资源（允许子目录，例如 `js/model/format.js`）。
+
+        路径仍必须落在 `STATIC_DIR` 之内：`..`、盘符与绝对路径一律 404。
+        接受 `Accept-Encoding: gzip` 时在传输层压一下，`Cache-Control` 保持 `no-store`。
+        """
+        if "\\" in name or name.startswith(".") or ":" in name:
             return self._send_error_json(404, "静态资源不存在")
-        target = (STATIC_DIR / name).resolve()
-        if target.parent != STATIC_DIR.resolve() or not target.is_file():
+        parts = [part for part in name.split("/") if part]
+        if not parts or any(part in (".", "..") for part in parts):
+            return self._send_error_json(404, "静态资源不存在")
+        root = STATIC_DIR.resolve()
+        target = root.joinpath(*parts).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return self._send_error_json(404, "静态资源不存在")
+        if not target.is_file():
             return self._send_error_json(404, "静态资源不存在")
         content_type = STATIC_TYPES.get(target.suffix, "application/octet-stream")
-        self._send_bytes(target.read_bytes(), content_type)
+        body = target.read_bytes()
+        packed = self._packed_static(target, body)
+        accepts = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+        if packed is not None and accepts:
+            self._send_bytes(packed, content_type, content_encoding="gzip")
+            return
+        self._send_bytes(body, content_type)
+
+    def _packed_static(self, target: Path, body: bytes) -> bytes | None:
+        """文本类静态资源的 gzip 结果（按 mtime+大小 记住：`no-store` 下页面每次都重取）。"""
+        try:
+            info = target.stat()
+            key = (str(target), info.st_mtime_ns, info.st_size)
+        except OSError:
+            return pack_static(body, target.suffix)
+        if key in _PACKED_CACHE:
+            return _PACKED_CACHE[key] or None
+        packed = pack_static(body, target.suffix)
+        if len(_PACKED_CACHE) >= _PACKED_CACHE_MAX:
+            _PACKED_CACHE.clear()
+        _PACKED_CACHE[key] = packed or b""
+        return packed
 
     def _send_evidence(self, run_id: str, name: str, *, download: bool) -> None:
         """run 证据（**流式**，支持单段 Range）。

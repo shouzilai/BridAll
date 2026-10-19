@@ -1169,6 +1169,83 @@ def check_raw_terminal_view() -> None:
     )
 
 
+def check_frontend_models_live_outside_the_page() -> None:
+    """前端纯模型分文件装载：页面按序引入、app.js 不留第二份实现、静态子目录与 gzip 可用。"""
+    print("\n[12] 前端纯模型：分文件装载、唯一实现、静态子目录与 gzip")
+    static_dir = CONSOLE_DIR / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+    model_dir = static_dir / "js" / "model"
+    models = sorted(item.name for item in model_dir.glob("*.js"))
+    check("模型文件在 static/js/model 下", {"sources.js", "format.js"} <= set(models), str(models))
+    tags = re.findall(r'<script src="(/static/[^"]+)"', index_html)
+    check(
+        "页面先装模型、最后装 app.js",
+        "/static/js/model/sources.js" in tags
+        and "/static/js/model/format.js" in tags
+        and tags.index("/static/js/model/sources.js") < tags.index("/static/app.js")
+        and tags.index("/static/js/model/format.js") < tags.index("/static/app.js")
+        and tags[-1] == "/static/app.js",
+        str(tags),
+    )
+    check(
+        "app.js 只解构命名空间",
+        "= globalThis.PWModelFormat" in app_js and "= globalThis.PWModelSources" in app_js,
+        "",
+    )
+    moved = (
+        "toEpochMs", "beijingParts", "beijingClock", "beijingStamp", "parseLine", "isErrorLine",
+        "lineTime", "formatDuration", "byteUnits", "compactDuration", "shortTime", "shortSha",
+    )
+    second = [name for name in moved if re.search(r"^function %s\(" % name, app_js, re.M)]
+    check("app.js 里没有第二份实现", not second, "；".join(second))
+    check(
+        "窗口清单只有一份",
+        "const SOURCES = [" not in app_js
+        and "const SOURCES = [" in (model_dir / "sources.js").read_text(encoding="utf-8"),
+        "",
+    )
+    check(
+        "模型不碰 DOM / 网络 / 存储 / 定时器",
+        not re.search(r"\b(document|fetch|EventSource|localStorage|sessionStorage|setTimeout|setInterval)\b",
+                      (model_dir / "format.js").read_text(encoding="utf-8")
+                      + (model_dir / "sources.js").read_text(encoding="utf-8")),
+        "",
+    )
+    body = "const value = 1;\n".encode("utf-8") * 200
+    packed = console_server.pack_static(body, ".js")
+    check("文本资源会压得比原文小", packed is not None and len(packed) < len(body), "")
+    check("二进制资源不压", console_server.pack_static(b"\x00" * 4096, ".bin") is None, "")
+    check("太小的资源不压", console_server.pack_static(b"x", ".js") is None, "")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "js").mkdir()
+        (root / "a.js").write_text("a", encoding="utf-8")
+        before = console_server.static_stamp(root)
+        (root / "js" / "m.js").write_text("m", encoding="utf-8")
+        check("子目录里的新文件也会改变静态指纹", before != console_server.static_stamp(root), "")
+    assembled = console_server.build_demo_assembly()
+    running = Running(assembled)
+    try:
+        status, text = running.text("/static/js/model/format.js")
+        check("GET /static/js/model/format.js = 200", status == 200 and "PWModelFormat" in text, str(status))
+        status, _ = running.text("/static/js/model/../../server.py")
+        check("越界的静态路径 404", status == 404, str(status))
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{running.port}/static/app.js", headers={"Accept-Encoding": "gzip"}
+        )
+        with running.opener.open(request, timeout=30) as response:
+            check("请求带 gzip 时压着发", response.headers.get("Content-Encoding") == "gzip", str(response.headers))
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{running.port}/static/app.js", headers={"Accept-Encoding": "identity"}
+        )
+        with running.opener.open(request, timeout=30) as response:
+            check("不请求 gzip 时原样发", response.headers.get("Content-Encoding") is None, "")
+            check("静态资源仍然不缓存", response.headers.get("Cache-Control") == "no-store", "")
+    finally:
+        running.close()
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1182,12 +1259,13 @@ def main() -> int:
     check_history_list_reads_names_without_hashing()
     check_warm_log_surfaces_are_light()
     check_raw_terminal_view()
+    check_frontend_models_live_outside_the_page()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
         return 1
     print(
-        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / "
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / "
         "连接生命周期 / 收发 / 串口参数 / 公共传输实现与失败面）"
     )
     return 0

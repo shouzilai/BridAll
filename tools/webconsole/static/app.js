@@ -1,6 +1,19 @@
 /* 嵌入式实验与诊断工作台 — 前端只读展示 + 受控意图，不直接接触串口。 */
 "use strict";
 
+/* 纯模型住在 `static/js/model/*.js`，由页面按固定顺序先装载（见 `index.html`），这里只
+ * 取它们的命名空间 —— 组合根不再保留这些函数的第二份实现。模型不读 DOM、不发请求、
+ * 不读写浏览器存储、不设定时器，只接收值、返回值。 */
+const {
+  BEIJING_OFFSET_MS, escapeRegExp, LEVEL_MODULE_RE, parseLine, isErrorLine, TIME_RE, lineTime,
+  toEpochMs, beijingParts, beijingClock, beijingStamp,
+  formatDuration, byteUnits, compactDuration, shortTime, shortSha, escapeHtml,
+} = globalThis.PWModelFormat;
+/* 五个窗口的清单是唯一出处：窗口顺序、偏好键、证据文件名都从这里来。 */
+const {
+  SOURCES, SOURCE_IDS, SOURCE_BY_ID, SOURCE_LABEL,
+} = globalThis.PWModelSources;
+
 const $ = (id) => document.getElementById(id);
 const STATE_POLL_MS = 2000;
 
@@ -42,30 +55,8 @@ const TEST_EVIDENCE = [
  *    已有文本节点 —— 整段文本自增赋值会替换文本节点，浏览器里的选区当场消失；
  *  - 暂停只冻结那一个窗口：SSE、串口采集与证据落盘继续跑，模型一行都不少；
  *  - 每个窗口高度固定（约 50 行），日志再多也只在自己内部滚动，不把整个页面撑长。 */
-const SOURCES = [
-  /* 工具输出：⚠️ 它是**派生视图**（`derived`）—— 内容是 `io_events.jsonl` 重画出来的，
-   * 而 RX 事件根本不画（只落索引）⇒ 它的行号与文件行号不同源。所以它的每一行带的是
-   * 它来自的那条 io 事件的**事件号**（`seq`），阶段卡要指到这一窗的某一行就用
-   * `{ source: "tool", event_seq: N }` 而不是行区间（）。
-   * 例外：自动验证 run 那一屏的「工具输出」看的是 tool.log 这份真文件 ⇒ 行号是真的，
-   * 那种装载不带 `tool_seqs`，这一窗就不是派生视图（按行号定位照旧）。 */
-  {
-    id: "tool", label: "工具输出", hint: "构建、烧录与采集的输出", file: "tool.log",
-    derived: true,
-  },
-  /* 阶段窗口（T6 迁入 + 2026-10-10 并排展示）：`file: ""` 是因为它**没有自己的证据文件**
-   * —— 它的来源是 run 事件流里的 `test_step`/`test_step_refs`（见 renderStepCards）。
-   * 没有证据文件 ⇒ 没有下载链接（不编一个指向别处的链接出来）。 */
-  {
-    id: "stage", label: "测试阶段", file: "", cards: true,
-    hint: "这一轮的阶段事件（卡片）",
-  },
-  { id: "raw", label: "原始串口", hint: "设备发出的原始字节（非 UTF-8 字节按替换字符显示）", file: "raw.bin" },
-  { id: "decoded", label: "解码日志", hint: "解码之后的日志", file: "decoded.log" },
-  { id: "events", label: "结构化事件", hint: "结构化事件，一行一条", file: "app_events.jsonl" },
-];
-const SOURCE_IDS = SOURCES.map((entry) => entry.id);
-const SOURCE_BY_ID = Object.fromEntries(SOURCES.map((entry) => [entry.id, entry]));
+/* 窗口清单（`SOURCES`）本身住在 `static/js/model/sources.js`：它是窗口顺序、偏好键与
+ * 证据文件名的唯一出处，这里只解构使用。 */
 
 /* 阅读偏好存在浏览器本地。
  * ⚠️ 这几个常量必须定义在 `app` 之前：`app.prefs = loadPrefs()` 在模块求值时就跑，
@@ -107,7 +98,6 @@ const RAIL_CLICK_MS = 260;
 const ROW_MIN_W = 1045;
 const isRowLayout = () => !globalThis.window || !globalThis.window.innerWidth
   || globalThis.window.innerWidth >= ROW_MIN_W;
-const SOURCE_LABEL = Object.fromEntries(SOURCES.map((entry) => [entry.id, entry.label]));
 
 /* --------------------------------------------------------------- 运行模式 */
 /* 三种模式共用一个调试台：自动验证（build→upload→observe→assert）、实时观察（连上设备
@@ -1176,80 +1166,6 @@ function createViewState() {
     notice: "",         // 一次性提示（重建清掉选区、复制结果等）
   };
 }
-
-/* 设备日志的级别/模块写在行里，例如 "[I][dht] cycle …"。
- * 工具输出与裸串口没有这种标记，就如实返回 null —— 猜一个级别比不显示更糟。 */
-const LEVEL_MODULE_RE = /(?:^|\s)\[([EWIDV])\](?:\[([A-Za-z0-9_.\-]+)\])?/;
-
-function parseLine(text) {
-  const match = LEVEL_MODULE_RE.exec(String(text ?? ""));
-  if (!match) return { level: null, module: null };
-  return { level: match[1], module: match[2] || null };
-}
-
-/* “错误”= 设备标了 [E]，或者这条记录压根没被解析器认识（A17 会因为后者直接判 FAIL）。
- * 只看错误必须把两种都留下，否则“整洁的错误列表”会恰好漏掉最该看的那种。 */
-function isErrorLine(text) {
-  const value = String(text ?? "");
-  return parseLine(value).level === "E" || value.includes("record.unparsed");
-}
-
-/* 行上的时间只取证据里**真实存在**的字段（设备 uptime）。
- * 写成 `+12.345s` 的样子：它一眼能看出是**设备自报的用时**，不是墙钟 ——
- * 主机时刻（下面那套北京时间）用 `HH:MM:SS.mmm` 的样子，两者不混。 */
-const TIME_RE = /\bup_ms=(\d+)|\buptime_s=(\d+)/;
-
-function lineTime(text) {
-  const match = TIME_RE.exec(String(text ?? ""));
-  if (!match) return "";
-  if (match[1] !== undefined) return `+${(Number(match[1]) / 1000).toFixed(3)}s`;
-  return `+${match[2]}s`;
-}
-
-/* ---------------------------------------------------------------- 北京时间 */
-/* 时间戳一律按 **UTC+8** 渲染，与浏览器所在时区无关：
- * 现场是北京时间，而“页面显示的时间”和“手机上的时间”对不上会直接毁掉联调的效率。
- *
- * ⚠️ 实现上先把毫秒加 8 小时，再用 `getUTC*` 读字段 —— 这样**不看本机时区**：
- * 用 `getHours()` 的话，换一台 UTC 的机器（或 CI）就显示成另一个时间。
- *
- * 精度：服务端的 `utc_now()` 是毫秒（`…SS.mmmZ`），事件流每条都带它 ⇒ 毫秒级，
- * 满足“10 ms 以内”的要求。 */
-const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
-
-function toEpochMs(value) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const text = String(value ?? "").trim();
-  if (!text) return null;
-  const ms = Date.parse(text);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function beijingParts(value) {
-  const ms = toEpochMs(value);
-  if (ms === null) return null;
-  const shifted = new Date(ms + BEIJING_OFFSET_MS);
-  const pad = (number, width = 2) => String(number).padStart(width, "0");
-  return {
-    date: `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`,
-    clock: `${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}`,
-    ms: pad(shifted.getUTCMilliseconds(), 3),
-  };
-}
-
-/* 每行前缀用：`HH:MM:SS.mmm`（只有时间，够短；完整日期在元数据那一层）。 */
-function beijingClock(value) {
-  const parts = beijingParts(value);
-  return parts ? `${parts.clock}.${parts.ms}` : "";
-}
-
-/* 元数据用：`YYYY-MM-DD HH:MM:SS.mmm`。取不到就返回空串（调用方负责写“不知道”）。 */
-function beijingStamp(value) {
-  const parts = beijingParts(value);
-  return parts ? `${parts.date} ${parts.clock}.${parts.ms}` : "";
-}
-
-const escapeRegExp = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /* 查询 → 正则。无效正则**当场**给出说明，而不是抛掉或悄悄当普通文本用：
  * 悄悄降级会让人以为“确实没有命中”。 */
@@ -4258,65 +4174,6 @@ function buildWorkspace(store) {
   applyLayout(store);
   // DOM 只有这一份：把它分给另外两个模式，换模式时才画得出来。
   shareDomRefs(store);
-}
-
-const escapeHtml = (value) =>
-  String(value ?? "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-
-function formatDuration(ms) {
-  if (ms === null || ms === undefined) return "—";
-  if (ms < 1000) return `${ms} ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)} s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes} m ${(seconds - minutes * 60).toFixed(0)} s`;
-}
-
-/* 字节数写成“人读得动”的紧凑形式（ / D8）：`B` / `KiB` / `MiB` / `GiB`。
- * ⚠️ 只换单位、**不重算**（数值仍是服务端数出来的那些）；1024 进位、最多一位小数 ⇒
- *    位数稳定，换单位时读数不会左右跳（D8 要的“稳定宽度”靠这个 + CSS 的等宽数字）。 */
-function byteUnits(bytes) {
-  const value = Number(bytes);
-  if (!Number.isFinite(value) || value < 0) return "—";
-  if (value < 1024) return `${Math.round(value)} B`;
-  const units = ["KiB", "MiB", "GiB", "TiB"];
-  let scaled = value / 1024;
-  let index = 0;
-  while (scaled >= 1024 && index < units.length - 1) {
-    scaled /= 1024;
-    index += 1;
-  }
-  return `${scaled.toFixed(1)} ${units[index]}`;
-}
-
-/* 持续时间的紧凑写法（ / D8）：`分:秒`、`时:分:秒`、`1天 02:03:04`。
- * ⚠️ 与 `formatDuration()` 分工不同（那个是给步骤耗时看的 `10.1 s` / `1 m 5 s`，判据钉着它）：
- *    这里要的是“一眼看出连了多久”，所以按时长自动选刻度，不写单位也能读懂。 */
-function compactDuration(ms) {
-  const total = Math.max(0, Math.round(Number(ms) || 0) / 1000);
-  const seconds = Math.floor(total % 60);
-  const minutes = Math.floor(total / 60) % 60;
-  const hours = Math.floor(total / 3600) % 24;
-  const days = Math.floor(total / 86400);
-  const two = (value) => String(value).padStart(2, "0");
-  if (days > 0) return `${days}天 ${two(hours)}:${two(minutes)}:${two(seconds)}`;
-  if (total >= 3600) return `${hours}:${two(minutes)}:${two(seconds)}`;
-  return `${minutes}:${two(seconds)}`;
-}
-
-/* 元数据里的时间一律**北京时间**（毫秒）。
- * ⚠️ 以前是把 ISO 的 `T`/`Z` 去掉直接显示 —— 那是 **UTC**，比现场时间早 8 小时，
- * 于是“设备卡上的最近活动”“run 开始时刻”全都对不上电脑上的表（真机验收提出）。
- * 认不出来的值写“—”（不知道就说不知道，不显示一个看着像时间的字符串）。 */
-function shortTime(iso) {
-  const stamp = beijingStamp(iso);
-  return stamp || "—";
-}
-
-function shortSha(sha) {
-  return sha ? String(sha).slice(0, 10) : "—";
 }
 
 /* 用户口径（2026-10-10）：顶栏那排“板 A / 板 B / STM32F103C8 …”设备芯片**整块删掉、不再使用**
