@@ -19,6 +19,23 @@ const {
   lineExcluded, hiddenReason, excludedCount, linePasses, visibleItem, viewItems, viewText,
   totalHits, locateHit,
 } = globalThis.PWModelLogFilter;
+/* 设备与 run 的事实层：身份标签、会话状态/时长/设备、证据引用骨架（只读服务端事实）。 */
+const {
+  SNIFF_IDENTITY_LABEL, EVIDENCE_REF_ORDER, startReadiness, sessionStateOf, sessionDurationMs,
+  sessionDeviceText, recordedDeviceText, recordedDeviceBadge, mergeEvidenceRefs, liveDurationMs,
+  summarizeDomains, runDeviceLine,
+} = globalThis.PWModelRuns;
+/* 身份那一块的纯文案：chip 短结论、详情整段、悬停全量、能力提示。 */
+const {
+  IDENTITY_TEXT, SAY_SELF_METADATA_FIELDS, observeIdentityLine, identitySummary,
+  observeLimitsSay, observeLimits, identityHoverTitle, observeIdentitySay, identityDetailSay,
+} = globalThis.PWModelIdentity;
+
+/* 状态句的三档机器（+ 键值/表格那几句）。 */
+const {
+  SAY_LEVELS, SAY_LEVEL_IDS, SAY_DEFAULT, SAY_RANK, SAY_ALWAYS, SAY_KEY_ITEM, SAY_RAW,
+  seg, say, sayText, sayTitle, sayBlock,
+} = globalThis.PWModelSay;
 /* 行模型：文本 → 展示行、追加/裁剪、行号基准、视图推进（不碰 DOM）。 */
 const {
   MAX_LINES, stripAnsi, toLines, isWatched, appendLineText, appendLineTime, appendMany,
@@ -3684,12 +3701,6 @@ function buildWorkspace(store) {
 
 /* 与 core 的 `IDENTITY_STATES` 一一对应。措辞说的是**这一次问到的结果**，
  * 不是“这块设备坏了” —— “没问到”是一类正常设备（空板/旧固件），首烧路径要从这里过。 */
-const SNIFF_IDENTITY_LABEL = {
-  confirmed: "已确认身份",
-  unknown: "没问到身份",
-  conflict: "与预期不符",
-  unqueryable: "问不了身份",
-};
 
 function sniffCardKey(card) {
   return `${Number(card && card.num) || 0}|${String((card && card.port) || "")}`;
@@ -4483,13 +4494,6 @@ function renderTestResults(tests, summary) {
  *
  * 下面三个文案函数是**纯函数**（宿主回归用 Node 直接驱动）：能力没实现的不许在文案里
  * 假装有 —— 一句"已连接"很容易被读成"已经在采证了"。 */
-const IDENTITY_TEXT = {
-  unknown: "未查询",
-  querying: "查询中",
-  ok: "已回应",
-  timeout: "无响应",
-  unsupported: "设备不支持",
-};
 
 /* ------------------------------------------------- 状态句的档位（用户口径 2026-10-10）
  * 用户提的：“平台有很多调试语句，加个按钮能选择性地展示”。
@@ -4519,19 +4523,8 @@ const THEME_ORDER = ["dark", "warm"];
  *
  * ⚠️ 2026-10-12（用户口径）：页面上那个「详情」下拉框**已删**（默认简洁）—— 所以三条定义
  * 与下面那套句子机器仍**只留一处**，但它们不再由页头控件驱动：模型回归直接喂三档。 */
-const SAY_LEVELS = [
-  { id: "brief", label: "简洁", sub: "详情里只留结论那一句" },
-  { id: "normal", label: "标准", sub: "详情给关键项" },
-  { id: "full", label: "详细", sub: "详情给全量原文：原始字段与机器元数据都摊开" },
-];
-const SAY_LEVEL_IDS = SAY_LEVELS.map((entry) => entry.id);
 /** 页面上**没有**档位控件（2026-10-12 起）：屏幕上固定用这一档。 */
-const SAY_DEFAULT = "brief";
-const SAY_RANK = { brief: 0, normal: 1, full: 2 };
 /* 一个片段要求的最低档位：结论 / 关键项 / 原始字段。 */
-const SAY_ALWAYS = 0;
-const SAY_KEY_ITEM = 1;
-const SAY_RAW = 2;
 
 function loadTheme() {
   try {
@@ -4587,37 +4580,12 @@ function sayLevelRow(level) {
 }
 
 /** 一个片段：`seg("文字")` = 结论（任何档位都显示）；`seg("文字", SAY_RAW)` = 只在详细档铺开。 */
-function seg(text, min = SAY_ALWAYS) {
-  const value = text === null || text === undefined ? "" : String(text);
-  return { text: value, min: Number(min) || 0 };
-}
 
 /* 按档位把一段段拼成一句。同时给出**没过筛的全文**与**被收起的条数**：
  * 调用方把 `full` 挂到 `title` 上 —— 档位只决定“要不要铺开”，决定不了
  * “这句话到底说了什么”（原文一个字都没改）。 */
-function say(level, segments) {
-  const rows = [];
-  for (const item of (segments || []).flat()) {
-    if (!item) continue;
-    const row = typeof item === "string" ? seg(item) : item;
-    if (!row.text) continue;
-    rows.push({ text: String(row.text), min: Number(row.min) || 0 });
-  }
-  const wanted = sayLevel(level);
-  const limit = SAY_RANK[wanted];
-  const shown = rows.filter((row) => row.min <= limit);
-  return {
-    text: shown.map((row) => row.text).join(" · "),
-    full: rows.map((row) => row.text).join(" · "),
-    hidden: rows.length - shown.length,
-    level: wanted,
-  };
-}
 
 /** 只要文字版（调用方不关心 title 时用它）。 */
-function sayText(level, segments) {
-  return say(level, segments).text;
-}
 
 /* title：被档位收起来的东西在这里交代清楚（悬停即见全量原文）。
  * `note` 是这一格本来就在 title 里说的那句话（会话号 / 证据目录…），原样保留。
@@ -4628,27 +4596,8 @@ function sayText(level, segments) {
  *    “收起了几项 + 完整原文在下面”，不再叫人去选另一档。
  * ⚠️ 档位从 `said.level` 取（不从当前偏好）：模型回归可以喂任意一档，
  *    那时 title 里说的必须是被喂的那一档。 */
-function sayTitle(said, note = "") {
-  const parts = [];
-  if (note) parts.push(note);
-  // 这一档没有收起任何东西（屏幕上那句就是全文）：不补一行重复同一句话的“完整原文”。
-  if (!said || !said.full || said.text === said.full) return parts.join("\n");
-  const folded = Number(said.hidden) || 0;
-  parts.push(folded
-    ? `收起了 ${folded} 项细节（完整原文就在下面）`
-    : `细节收起来了（完整原文就在下面）`);
-  parts.push(`完整原文：${said.full}`);
-  return parts.join("\n");
-}
 
 /** 把几句拼成一块（`text` 用当前档位，`full` 是没过筛的全文，`title` 给全量 + 收起了几项）。 */
-function sayBlock(saids) {
-  const rows = (saids || []).filter(Boolean);
-  const text = rows.map((row) => row.text).filter(Boolean).join(" · ");
-  const full = rows.map((row) => row.full).filter(Boolean).join(" · ");
-  const hidden = rows.reduce((sum, row) => sum + (Number(row.hidden) || 0), 0);
-  return { text, full, hidden, title: sayTitle({ text, full, hidden, level: sayLevel() }) };
-}
 
 /* 端口/波特率/状态/时长/RX/TX/最近一次收发 —— 全是服务端数出来的数，不在这里重算。
  * ⚠️ D8（2026-10-10）：这一行**不再是屏幕上那一行**（它太长，会把控制区撑成两行）；
@@ -4748,54 +4697,8 @@ function observeSelectionNote(observe, selectedPort = (app.selectedCard && app.s
  *   - 结论（“身份：已回应” / “拒绝解码，不猜” / “实时解码 N 行”）在任何档都显示；
  *   - 设备自报的字段属于“关键项”（标准及以上）——那是这一路最直接的证据；
  *   - `schema` / `protocols` 与字典的 ELF 指纹属于**机器对机器**的字段，只在详细档铺开。 */
-const SAY_SELF_METADATA_FIELDS = ["schema", "protocols"];
 
-function observeIdentitySay(observe, level) {
-  if (!observe) return say(level, []);
-  const identity = observe.identity || { state: "unknown", fields: {} };
-  const state = IDENTITY_TEXT[identity.state] || identity.state || "未知";
-  const rows = Object.entries(identity.fields || {})
-    .filter(([, value]) => value !== null && value !== undefined && value !== "");
-  const show = (pairs) => pairs
-    .map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : value}`);
-  const mine = show(rows.filter(([key]) => !SAY_SELF_METADATA_FIELDS.includes(key)));
-  const meta = show(rows.filter(([key]) => SAY_SELF_METADATA_FIELDS.includes(key)));
-  const parts = [seg(`身份：${state}`)];
-  if (!rows.length) parts.push(seg("设备没有自报字段"));
-  if (mine.length) parts.push(seg(`设备自报 ${mine.join(" ")}`, SAY_KEY_ITEM));
-  if (meta.length) parts.push(seg(`握手元数据 ${meta.join(" ")}`, SAY_RAW));
-  const archive = identity.archive || null;
-  if (archive && archive.path) {
-    const hash = (archive.elf_sha256 || "").slice(0, 12);
-    // 命中的是哪份字典（名字/来源与条数）是结论；那串 ELF 指纹是核对用的原始字段。
-    parts.push(seg(
-      `主机匹配 字典 ${archive.origin || archive.path}（${archive.entries} 条）`,
-      SAY_KEY_ITEM));
-    if (hash) parts.push(seg(`字典指纹 ELF ${hash}`, SAY_RAW));
-  } else if (identity.build_id32 !== null && identity.build_id32 !== undefined) {
-    // 有 build id 但没命中：这是一个**结论**，不是"还没做"。
-    // ⚠️ 简洁档也要留住“拒绝解码”这四个字（那是结论）；具体是哪个号只在标准及以上铺开。
-    const hex = `0x${Number(identity.build_id32).toString(16).padStart(8, "0")}`;
-    parts.push(seg(sayLevel(level) === "brief"
-      ? "主机匹配 没有对应的字典（拒绝解码，不猜）"
-      : `主机匹配 没有 build ${hex} 对应的字典（拒绝解码，不猜）`));
-  } else if (identity.source !== "none") {
-    // ⚠️ 不能把这一种写成"没有对应字典"：我们连**可查的号**都没有，
-    // 那是两件不同的事实（一个说查过了没命中，一个说没得可查）。
-    parts.push(seg("主机匹配 设备没有报告 build id，没有可查的目标"));
-  }
-  const decode = observe.decode || {};
-  if (decode.ready) parts.push(seg(`实时解码 ${decode.lines} 行`));
-  // ⚠️ 服务端没给原因时不能自己编一条：只说“未解码”（简洁档连这一句也收短）。
-  else if (decode.reason) {
-    parts.push(seg(sayLevel(level) === "brief" ? "未解码" : `未解码：${decode.reason}`));
-  }
-  return say(level, parts);
-}
 
-function observeIdentityLine(observe, level) {
-  return observeIdentitySay(observe, level).text;
-}
 
 /* 身份**结论**（屏幕上那几枚 chip 的文字）—— 用户口径 2026-10-11 验收 P1：
  * 「主界面仅保留身份结论，例如“身份已确认 / 字典不匹配”；完整原因和字典清单移入悬停或详情入口」。
@@ -4808,74 +4711,13 @@ function observeIdentityLine(observe, level) {
  *   ② **主机**能不能拿这个 build 找到字典（命中 / 不匹配 / 连可查的号都没有）；
  *   ③ 这一刻在不在解码。
  * ⚠️ ②是“主机匹配”的结论，不是设备的能力：写“设备不支持字典”会把责任安错人。 */
-function identitySummary(observe) {
-  const identity = (observe && observe.identity) || {};
-  const archive = identity.archive || null;
-  const hasBuild = identity.build_id32 !== null && identity.build_id32 !== undefined;
-  let label = "身份未查询";
-  let kind = "";
-  if (identity.state === "ok") {
-    label = "身份已确认";
-    kind = "ok";
-  } else if (identity.state === "querying") {
-    label = "身份查询中";
-  } else if (identity.state === "timeout") {
-    label = "身份无响应";
-    kind = "fail";
-  } else if (identity.state === "unsupported") {
-    label = "设备不支持身份查询";
-    kind = "warn";
-  }
-  let dictLabel = "";
-  let dictKind = "";
-  if (identity.state === "ok") {
-    if (archive) {
-      dictLabel = "字典已命中";
-      dictKind = "ok";
-    } else if (hasBuild) {
-      dictLabel = "字典不匹配";
-      dictKind = "fail";
-    } else {
-      dictLabel = "没有可查的 build id";
-      dictKind = "warn";
-    }
-  }
-  const decode = (observe && observe.decode) || {};
-  let decodeLabel = "";
-  let decodeKind = "";
-  if (decode.ready) {
-    decodeLabel = `解码 ${decode.lines} 行`;
-    decodeKind = "ok";
-  } else if (decode.reason) {
-    // “未解码”是结论；**为什么**（含手上有哪些字典）在详情与悬停里。
-    decodeLabel = "未解码";
-    decodeKind = "warn";
-  }
-  return { label, kind, dictLabel, dictKind, decodeLabel, decodeKind };
-}
 
 /* 「详情」里那一整段（也是 `#identChip` 悬停里那一份）：自报字段 + 主机匹配 + 能力提示。
  * 档位只管**这里**铺开多少（屏幕上的 chip 永远只有结论）。返回 `sayBlock()` 的形状：
  * `text` = 当前档位下展开的那一段，`title` = 全量原文 + “这一档收起了几项”。 */
-function identityDetailSay(observe, level) {
-  return sayBlock([
-    observeIdentitySay(observe, level),
-    observeLimitsSay(observe, level),
-  ]);
-}
 
 /* 悬停里那一份：**永远**给全量原文（结论 chip 很小，悬停是它的详情入口之一；
  * 另一个是「详情」按钮 —— 两个入口给的是**同一句话**，逐字一致）。 */
-function identityHoverTitle(detail) {
-  if (!detail || !detail.full) return "";
-  const parts = [];
-  if (detail.text !== detail.full) {
-    // 页面上没有档位控件（2026-10-12）：只说“屏幕上那句是简化过的、全文就在下面”。
-    parts.push("屏幕上那句是简化过的（完整原文就在下面）");
-  }
-  parts.push(`完整原文：${detail.full}`);
-  return parts.join("\n");
-}
 
 /* 「详情」那一行：**只有用户点了才进 DOM**（不点就一点都不占高度 —— P1 说的
  * “控制区高度膨胀”就死在这一行 hidden 上）。 */
@@ -5062,36 +4904,7 @@ function renderDecodeWhy(observe) {
 }
 
 /* 这一步还**没有**的能力，直接由服务端的能力声明派生（不是这里硬编码的承诺）。 */
-function observeLimitsSay(observe, level) {
-  if (!observe) return say(level, []);
-  const caps = observe.capabilities || {};
-  // 每一条都是“结论（任何档都在）+ 为什么/在你手上看到的样子（标准及以上）”。
-  const notes = [];
-  if (!caps.evidence) {
-    notes.push(seg("本切片只统计收发字节"));
-    notes.push(seg("尚未写成会话证据（raw.bin / io_events.jsonl 在下一步）", SAY_KEY_ITEM));
-  }
-  // ⚠️ 这句话过时了（实时解码早就实现了）：`decode=false` 现在**只有**一种含义 ——
-  //    这一路按能力声明就不做解码（ 的关闭 Token Log 构型）。说成"尚未实现"
-  //    是拿旧的进度当真话讲，与"不猜不编"冲突。
-  if (!caps.decode) {
-    notes.push(seg("这一路没有解码能力"));
-    notes.push(seg("会话里只有原始字节与事件记录", SAY_KEY_ITEM));
-  }
-  if (!caps.send) {
-    notes.push(seg("命令框与终端直输尚未实现"));
-    notes.push(seg("现在只收不发", SAY_KEY_ITEM));
-  }
-  if (!caps.identity) {
-    notes.push(seg("身份握手尚未实现"));
-    notes.push(seg("不会主动去问设备型号", SAY_KEY_ITEM));
-  }
-  return say(level, notes);
-}
 
-function observeLimits(observe, level) {
-  return observeLimitsSay(observe, level).text;
-}
 
 /* 当前（或最近一次）会话：下载链接与窗口内容都靠它。
  * 会话结束后回退到 `last`：刚采到的证据不应该因为点了“断开”就下载不了。 */
@@ -7101,28 +6914,9 @@ function applyTestStep(row, view = attachedView()) {
 
 /*: 四类证据的固定顺序（与 core 的 `EVIDENCE_SOURCES` 一致）。
  * 第四类叫 `app_events`（对应 `app_events.jsonl`）—— 与平台事件流 `events.jsonl` 不是一回事。 */
-const EVIDENCE_REF_ORDER = ["tool", "raw", "decoded", "app_events"];
 
 /** 合并两份坐标：同来源以 `patch`（补写）为准，补写没给的保留实时那一份。
  * 与 core 的 `step_lifecycle.merge_refs()` 同一套规矩 —— 顺序也固定。 */
-function mergeEvidenceRefs(base, patch) {
-  const bySource = new Map();
-  for (const item of [...(base || []), ...(patch || [])]) {
-    const source = String((item && item.source) || "");
-    if (!EVIDENCE_REF_ORDER.includes(source)) continue;
-    const anchor = Number(item.anchor_line);
-    bySource.set(source, {
-      source,
-      start_line: Number(item.start_line),
-      end_line: Number(item.end_line),
-      /* ⚠️ 中心锚点**合并时不能丢**（用户口径 2026-10-13）：丢了就退回“区间末行”，
-         而补写那一份正是带锚点的（`@TASKS` 这类决定性证据行）。旧记录本来就没有这个键
-         ⇒ 这里也不写，前端自己按末行回退。 */
-      ...(Number.isFinite(anchor) ? { anchor_line: anchor } : {}),
-    });
-  }
-  return EVIDENCE_REF_ORDER.filter((name) => bySource.has(name)).map((name) => bySource.get(name));
-}
 
 /** 收一条 `test_step_refs` 事件（T5 补写）：**只补坐标**。
  *
@@ -7291,12 +7085,6 @@ function describeRawRef(row) {
 /** 一个阶段已经跑了多久（毫秒）。
  * 跑着的时候用**事件里的起点**与当前时刻现算（后台那条 `duration_ms` 是上次事件那一刻的，
  * 拿它当真会显示一条不动的数字）；定局之后就用后台给的那个定格值。 */
-function liveDurationMs(row, nowMs) {
-  if (row.status !== "running" || !row.started_utc) return row.duration_ms || 0;
-  const started = Date.parse(row.started_utc);
-  if (Number.isNaN(started)) return row.duration_ms || 0;
-  return Math.max(0, nowMs - started);
-}
 
 /* ------------------------------------------------- 阶段窗口（第 5 格）的渲染器 */
 /* 这一窗的正文不是“行”，是卡片（`<li class="stage">`）。所以行机制（renderPending /
@@ -8219,19 +8007,6 @@ function renderPanic(summary, evidence) {
  * 域由判据自己声明（`domain`），页面**不替谁猜**；一条都没声明就退回只报总数。 */
 const DOMAIN_TEXT = { evidence: "证据与日志健康", business: "业务结论" };
 
-function summarizeDomains(rows) {
-  const buckets = new Map();
-  for (const row of rows || []) {
-    const name = String((row && row.domain) || "");
-    if (!name) continue;
-    const bucket = buckets.get(name) || { domain: name, total: 0, passed: 0, failed: [] };
-    bucket.total += 1;
-    if (row.status === "pass") bucket.passed += 1;
-    else bucket.failed.push(row.id);
-    buckets.set(name, bucket);
-  }
-  return Array.from(buckets.values());
-}
 
 function renderAssertions(assertions) {
   app.assertionRows = Array.isArray(assertions) ? assertions.slice() : [];
@@ -8285,27 +8060,8 @@ function renderAssertions(assertions) {
  *    （旧 run 里的"板 A / 板 B"、device key 继续兼容展示，**不迁移、不补全**）；
  *  · 两者都没有 ⇒ 说"这一趟没记下设备"，不编一个。
  */
-function recordedDeviceText(recorded) {
-  const row = recorded || {};
-  const port = String(row.port || "");
-  if (!port && !row.device_key && !row.target_id) return "设备：这一趟没有记下设备";
-  if (row.legacy) {
-    return `设备：按旧格式回放（${row.device_key || "?"}${port ? " · " + port : ""}）`
-      + "—— 当时没记下设备序号与身份，不补";
-  }
-  const num = Number(row.scan_seq) ? `#${Number(row.scan_seq)} ` : "";
-  const state = (row.identity_before || {}).state || "";
-  const label = SNIFF_IDENTITY_LABEL[state] || state;
-  return `设备：${num}${port || "?"}${label ? `（${label}）` : ""}`;
-}
 
 /* 历史表那一格里的小徽标：新 run 报"#3 COM<n>"，旧 run 报"旧格式"（悬停看详情）。 */
-function recordedDeviceBadge(recorded) {
-  const row = recorded || {};
-  if (row.legacy) return "旧格式";
-  const num = Number(row.scan_seq) ? `#${Number(row.scan_seq)}` : "设备";
-  return `${num}${row.port ? " " + row.port : ""}`;
-}
 
 function renderRunMeta(run) {
   const idEl = $("runId");
@@ -8431,32 +8187,11 @@ function historyTitle(mode) { return HISTORY_TITLES[mode] || HISTORY_TITLES.auto
 function historyHint(mode) { return HISTORY_HINTS[mode] || HISTORY_HINTS.auto; }
 function historyColumns(mode) { return (HISTORY_COLUMNS[mode] || HISTORY_COLUMNS.auto).slice(); }
 
-function sessionStateOf(row) {
-  if (!row) return "broken";
-  if (row.broken) return "broken";
-  if (row.live) return "live";
-  return row.complete ? "closed" : "open";
-}
 
 /* 会话持续时间 = manifest 记的开始/结束时刻之差；还在写的那次 = 开始到现在（`now`）。
  * ⚠️ 不拿 `totals` 编一个数（那份里根本没有时长）—— 时间戳本身就是记录下来的事实。 */
-function sessionDurationMs(row, now) {
-  const started = Date.parse(String((row && row.opened_utc) || ""));
-  if (!Number.isFinite(started)) return null;
-  const closedRaw = row && row.closed_utc;
-  const closed = closedRaw ? Date.parse(String(closedRaw)) : Number(now);
-  if (!Number.isFinite(closed)) return null;
-  return Math.max(0, closed - started);
-}
 
 /* 设备 / 通信口：先给设备（自报的标签），再给口与波特率。都没有就如实说“未知”。 */
-function sessionDeviceText(row) {
-  const device = (row && (row.device_label || row.device)) || "";
-  const port = (row && row.port) || "";
-  const baud = row && row.baud ? ` @ ${row.baud}` : "";
-  if (!device && !port) return "未知";
-  return [device || "", port ? `${port}${baud}` : ""].filter(Boolean).join(" · ");
-}
 
 /* TX/RX：**缺失就说“未知”**，不用 0、空白或 PASS 顶替（§12 明令）。
  * `totals` 是会话结束时才写的 ⇒ 进行中的那次只有文件大小可看，用“（文件）”标出来。 */
@@ -10269,46 +10004,6 @@ async function refreshRuns() {
  * 所以这里把“为什么”算成一份**可以显示**的东西：`blocked`（按钮灰掉）+ `hint`
  * （就在按钮旁边的一行话）+ `reason`（tooltip）。纯函数：宿主模型回归直接喂它组合。
  */
-function startReadiness(facts, options) {
-  const spec = facts || {};
-  const state = options || {};
-  const missing = !spec.target || !spec.firmware || !spec.suite;
-  if (state.running) {
-    return { blocked: true, hint: "", reason: "已有 run 正在执行：等它结束或先取消" };
-  }
-  if (state.mode !== "auto") {
-    return { blocked: true, hint: "", reason: "只有“自动验证”模式能启动 run：实时观察不编译、不烧录" };
-  }
-  if (state.portBlocked) {
-    return {
-      blocked: true,
-      hint: "",
-      reason: `串口被实时观察会话占用（${state.ownPort || "?"}）：先在实时观察里断开再启动`,
-    };
-  }
-  if (missing) {
-    /* 用户口径（2026-10-13）：身份未知、而这台设备上**可能烧录两份以上**固件时，
-     * “烧哪一份”只能由人定（实时观察那条路不受影响 —— 它不烧录、也不靠身份进门）。
-     * 那一栏在 `renderRunFirmwares()` 里已经留空（不替使用者挑），这里的提示就是
-     * **为什么按钮按不下去**的那句话。 */
-    if (!spec.firmware) {
-      return {
-        blocked: true,
-        hint: "请选择要烧录的固件",
-        reason: "请选择要烧录的固件：身份未识别时平台不替你决定烧哪一份",
-      };
-    }
-    return { blocked: true, hint: "", reason: "先选好目标 / 固件 / 套件" };
-  }
-  if (spec.firmware.requires_flash_confirmation && !state.confirmFlash) {
-    return {
-      blocked: false,
-      hint: "还差一步：勾选“我确认覆盖设备 Flash”（就在上面那个选项里）",
-      reason: "所选固件会覆盖设备 Flash：每次运行都要重新确认",
-    };
-  }
-  return { blocked: false, hint: "", reason: "" };
-}
 
 /* 一次被拒绝的启动：说清原因，并把“要动的那一个控件”括起来（）。
  * 只往屏幕另一头的 `#runMessage` 写一行，等于没说 —— 现场看到的就是“点了没反应”。
@@ -10446,15 +10141,6 @@ function updateButtons() {
  * ⚠️ 没选卡片时**不说“未声明端口”**（那是把“没点名”说成了“设备没说”，会让人
  *    以为要去查设备声明）：而是明说这次按**本机登记**的端口走。
  * ⚠️ 用户口径 2026-10-13：屏幕上不出现“目标声明”这类内部词。 */
-function runDeviceLine() {
-  const card = app.selectedCard;
-  if (card) {
-    const stateLabel = SNIFF_IDENTITY_LABEL[card.state] || card.state || "未知";
-    return `设备：#${card.num} ${card.port}（${stateLabel}）`;
-  }
-  const fallback = (selectedRunFacts().target || {}).transport?.port || "";
-  return `设备：未点名（按本机登记的端口 ${fallback || "未登记"} 走）`;
-}
 
 async function startRun() {
   const selection = selectedRunFacts();
