@@ -19,6 +19,12 @@ const {
   lineExcluded, hiddenReason, excludedCount, linePasses, visibleItem, viewItems, viewText,
   totalHits, locateHit,
 } = globalThis.PWModelLogFilter;
+/* 行模型：文本 → 展示行、追加/裁剪、行号基准、视图推进（不碰 DOM）。 */
+const {
+  MAX_LINES, stripAnsi, toLines, isWatched, appendLineText, appendLineTime, appendMany,
+  appendText, setSourceLines, setSourceText, flushPlan, markRendered, trimSource, acceptItem,
+  advanceView, resetView, streamLineFrame, streamGapIssue, applyStreamFrame, paneFrameIssue,
+} = globalThis.PWModelLogSource;
 /* 证据定位与区间窗口的纯模型（行号换算、区间合并、窗口标注、拼接计划）。 */
 const {
   FALLBACK_TAIL_BYTES, byteText, mergeByteRanges, tailByteRange, previousByteRange,
@@ -763,7 +769,6 @@ const IMPORT_POLL_MAX = 300;
 
 /* 设备流是无限的，视图必须有上限；但截断必须**记账**，不然“看到的就是全部”
  * 会变成一句没人能核实的话。 */
-const MAX_LINES = 5000;
 
 /* --------------------------------------- 历史证据的区间窗口（ / L3） */
 /* 一份证据可能几百 MB，页面**不能**把整份装进来。所以历史装载改成"窗口"：
@@ -820,16 +825,8 @@ const MAX_LINES = 5000;
  * （真机上看到的是 `[I][I][demo] line=…`）。拼不成时那个片段只能如实留着。
  */
 
-const stripAnsi = (text) => String(text ?? "").replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
 /* 文本 → 展示行。末尾的换行是行终止符，不是“一行空内容”。 */
-function toLines(text) {
-  const clean = stripAnsi(text);
-  if (!clean) return [];
-  const lines = clean.replace(/\r\n?/g, "\n").split("\n");
-  if (lines[lines.length - 1] === "") lines.pop();
-  return lines;
-}
 
 function createLogStore() {
   const store = { sources: {} };
@@ -921,49 +918,14 @@ function createSourceState(id) {
 }
 
 /* “这个窗口正看着自己的尾巴” —— 只有这种情况，新行才不需要提示、才跟着滚。 */
-function isWatched(store, id) {
-  const source = store.sources[id];
-  return Boolean(source) && !source.paused && source.followTail;
-}
 
 /* 往模型里追加。`lines` 里元素可以是字符串，也可以是 `{ text, ts }`（一条一行自己的时刻）。
  * `ts` 是整个批次的时刻（一次串口读到的 N 行共享**到达那一刻**）——
  * 这不是偷懒：`io_events.jsonl` 里记的就是"这一次读到的这些字节"，同一批行本来就同时到达。
  * 两种都给时，行自己的 `ts` 优先。 */
-function appendLineText(entry) {
-  return entry !== null && typeof entry === "object" ? String(entry.text ?? "") : String(entry ?? "");
-}
 
-function appendLineTime(entry, batchTs) {
-  if (entry !== null && typeof entry === "object" && entry.ts !== undefined && entry.ts !== null) {
-    return entry.ts;
-  }
-  return batchTs;
-}
 
-function appendMany(store, id, lines, ts, eventSeq = null) {
-  const source = store.sources[id];
-  if (!source) return 0;
-  let added = 0;
-  for (const entry of lines) {
-    source.lines.push(appendLineText(entry));
-    /* 派生视图逐行记下“这一行来自哪条 io 事件”（`eventSeq`）：一条事件画出多行时只有第一行带
-     * 事件号（其余行是同一件事的续行，没有自己的事件）—— 不拿第一行的事件号冒充它们。 */
-    if (source.seqs) source.seqs.push(added === 0 ? eventSeq : null);
-    const when = appendLineTime(entry, ts);
-    // 源行号是**证据里的序号**：裁剪不会让它跳回去，时刻也就跟着它走。
-    if (when !== undefined && when !== null && when !== "") {
-      source.times.set(source.baseIndex + source.lines.length - 1, when);
-    }
-    added += 1;
-    if (!isWatched(store, id)) source.pending += 1;
-  }
-  return added;
-}
 
-function appendText(store, id, text, ts, eventSeq = null) {
-  return appendMany(store, id, toLines(text), ts, eventSeq);
-}
 
 /* 串口半行会为了低延迟分批到达：后续批次是上一条视觉行的续写，不是新行。
  * `lineNo`（可选）= 这一行在证据里的行号：接得上才接（见 `streamLineFrame`）。 */
@@ -1075,48 +1037,7 @@ function createViewState() {
 
 /* 整体装载（历史 run、切换 run、清空）：视图被权威证据替换，
  * 所以这一路不再处于“冻结”状态 —— “暂停着但显示最新”是自相矛盾的。 */
-function setSourceLines(store, id, lines, seqs = null) {
-  const source = store.sources[id];
-  if (!source) return 0;
-  const entries = Array.from(lines || []);
-  source.lines = entries.map(appendLineText);
-  /* 事件号列与 `lines` **同长**（没对应行的那一格是 null）。给了 `seqs` ⇒ 这一窗现在是
-   * 派生视图（内容是画出来的，行号不当行身份用）；没给 ⇒ 行号就是它的身份（run 的
-   * tool.log、原始串口…）。不是派生视图的窗没有这一列，不凭空造一个。 */
-  if (source.seqs) {
-    const column = Array.isArray(seqs) ? seqs : [];
-    source.seqs = entries.map((entry, index) => {
-      const value = column[index];
-      return value === undefined || value === null ? null : Number(value);
-    });
-    source.derived = Array.isArray(seqs);
-  }
-  // 整体装载：时刻也整体换掉（上一份证据的时刻绝不留到新证据上）。
-  source.times.clear();
-  entries.forEach((entry, index) => {
-    const when = appendLineTime(entry, null);
-    if (when !== undefined && when !== null && when !== "") source.times.set(index, when);
-  });
-  source.rendered = 0;   // DOM 必须整体重画
-  source.pending = 0;    // 这是权威证据，不是“你还没看到的新行”
-  source.dropped = 0;
-  // 行号基准回 0：整体装载 = 从文件开头开始的完整内容（）。
-  // 不归零的话，一个窗口装载过的证据再接整份装载时，左边那列会从上一个基准继续数。
-  source.baseIndex = 0;
-  // ⚠️ 基准的**可信度**也回默认（）：整体装载只是"这一窗现在从自己的第 1 行算"，
-  //    它**不**证明那一行就是文件第 1 行 —— 要不要升级成 `exact` 由装载/行事件那边说。
-  source.baseTrust = "assumed";
-  source.baseIssue = "";
-  source.streamed = false;   // 整体装载 = 不是从 SSE 接的（行号基准要么为 0、要么随响应头回来）
-  source.paused = false;
-  source.followTail = true;
-  source.seen.clear();
-  return source.lines.length;
-}
 
-function setSourceText(store, id, text) {
-  return setSourceLines(store, id, toLines(text));
-}
 
 function setPaused(store, id, paused) {
   const source = store.sources[id];
@@ -1146,42 +1067,12 @@ function resumeSource(store, id) {
 }
 
 /* 视图落后模型多少行（暂停期间才会 > 0）。 */
-function flushPlan(store, id) {
-  const source = store.sources[id];
-  if (!source || source.rendered >= source.lines.length) return null;
-  return { from: source.rendered, to: source.lines.length };
-}
 
 /* 视图追上模型：`rendered` 是“已画进 DOM 的行数”，只有 DOM 层会推进它。
  * 暂停时它原地不动 —— 差距就是待显示的行数。 */
-function markRendered(store, id, count) {
-  const source = store.sources[id];
-  if (source) source.rendered = Math.max(0, Math.min(count, source.lines.length));
-}
 
 /* 有界缓冲：丢掉最旧的行并记账。DOM 里装的永远是模型的**前缀**，
  * 所以“丢最旧的行”= 同时删掉容器最前面的同数节点。 */
-function trimSource(store, id, maxLines = MAX_LINES) {
-  const source = store.sources[id];
-  if (!source) return 0;
-  const extra = source.lines.length - maxLines;
-  if (extra <= 0) return 0;
-  source.lines.splice(0, extra);
-  // 事件号列与 `lines` 逐行对齐 ⇒ 裁剪必须同步，否则它会把旧行的事件号配给新行。
-  if (source.seqs) source.seqs.splice(0, extra);
-  source.dropped += extra;
-  source.baseIndex += extra;   // 源行号从证据的开头算，裁剪不应该改变已经显示过的编号
-  source.rendered = Math.max(0, source.rendered - extra);
-  // 顶上那一行已经不是原来那一行了（被裁掉了）⇒ 它不再是"边界上那条不完整的行"。
-  if (source.partialHead) source.partialHead = false;
-  // 时刻表跟着裁：键是**递增插入**的，所以一遇到 >= baseIndex 就可以停
-  // （不能只增不减：长会话会把每一行的时刻都留在内存里）。
-  for (const key of source.times.keys()) {
-    if (key >= source.baseIndex) break;
-    source.times.delete(key);
-  }
-  return extra;
-}
 
 /* 结构化事件 → 一行文本。seq 与 offset 都留着：前者是事件流里的身份，
  * 后者本身就是一个“能回到 decoded.log 那一字节”的定位器。 */
@@ -1297,30 +1188,8 @@ function buildLineNode(source, item) {
 
 /* 视图状态的记账：**两种渲染路径共用**（有 DOM 的与只推模型的宿主回归），
  * 所以“可见计数”“折叠组”“命中清单”不可能在两条路径里算出两个结果。 */
-function acceptItem(view, item, absoluteIndex) {
-  if (item.merged) {
-    view.tail.repeats = item.repeats;
-    return false;
-  }
-  view.tail = item;
-  view.visible += 1;
-  if (item.ranges.length) view.hits.push({ index: absoluteIndex, ranges: item.ranges });
-  return true;
-}
 
 /* 只推模型、不建 DOM：宿主回归用它驱动与浏览器完全相同的判定。 */
-function advanceView(store, id) {
-  const source = store.sources[id];
-  const view = source.view;
-  let appended = 0;
-  for (let index = source.rendered; index < source.lines.length; index += 1) {
-    const item = visibleItem(source, index, view.tail);
-    if (!item) continue;
-    if (acceptItem(view, item, source.baseIndex + index)) appended += 1;
-  }
-  markRendered(store, id, source.lines.length);
-  return appended;
-}
 
 /* 只追加：既有节点（连同其中的选区）一个都不碰。
  * 过滤与折叠也走这条路 —— 被过滤掉的行根本不生成节点。 */
@@ -1349,16 +1218,6 @@ function renderPending(store, id) {
 }
 
 /* 视图回到“什么都没画”的状态（重建或整体装载的第一步）。 */
-function resetView(store, id) {
-  const source = store.sources[id];
-  if (!source) return;
-  const view = source.view;
-  markRendered(store, id, 0);
-  view.visible = 0;
-  view.hits = [];
-  view.hitCursor = -1;
-  view.tail = null;
-}
 
 /* 裁剪后把视图状态也对齐：丢掉的命中不能再被“上一个/下一个”找到。
  * 可见计数按**真正删掉的节点数**减少 —— 被过滤掉的行本来就没节点，不能一条抵一个。 */
@@ -1479,28 +1338,8 @@ function settle(store, id, added) {
  *   · `issue` 非空 ⇒ 这一窗的行号**不可信**（含人话原因）；
  *   · 两者都没有 ⇒ 对得上，什么都不用改。
  * 没有行号（`lineNo` 不是正整数）时不改结论 —— 老服务/旧录音就是这一路。 */
-function streamLineFrame(source, lineNo, rowsBefore, continuation) {
-  const value = Math.floor(Number(lineNo));
-  if (!Number.isFinite(value) || value < 1) return { base: null, issue: "" };
-  const base = Number(source.baseIndex) || 0;
-  const rows = Math.max(0, Math.floor(Number(rowsBefore) || 0));
-  if (rows === 0) return { base: value - 1, issue: "" };   // 这一窗从这一行开始
-  if (continuation) {
-    // 续行只允许接在**它自己那一行**后面：那一行是文件第 `base + rows` 行。
-    if (value === base + rows) return { base: null, issue: "" };
-    // 一种是"第一行是没带行号的半行，现在接完了"：这一行自己就把基准说清了。
-    if (rows === 1 && source.baseTrust !== "exact") return { base: value - 1, issue: "" };
-    return { base: null, issue: streamGapIssue(base + rows, value) };
-  }
-  const expected = base + rows + 1;
-  if (value === expected) return { base: null, issue: "" };
-  return { base: null, issue: streamGapIssue(expected, value) };
-}
 
 /* 缺口那句话（纯函数）：说清"从哪里跳到了哪里"，不说"可能丢了几条"这种估算。 */
-function streamGapIssue(expected, actual) {
-  return `实时行有缺口（第 ${expected} 行之后直接到了第 ${actual} 行）`;
-}
 
 /* 把一条判定落到这一窗上：基准/可信度就位，缺口则记账（**只说一次原因**）。
  *
@@ -1509,23 +1348,6 @@ function streamGapIssue(expected, actual) {
  *    它们的不改结论 ≠ 核实过。真机上撞到过这条被架空 —— 老录音的窗被一路升级成 `exact`，
  *    于是"重放被截断时不拿这一窗去定位"这条护栏根本不触发（而且半行接完那条路也走不到了）。
  *    宁可不说错：没验证过的窗就停在"假定"上，截断时如实拒绝定位。 */
-function applyStreamFrame(source, frame) {
-  if (!source || !frame) return;
-  source.streamed = true;   // 走到这里 = 这一窗的行是流式接上来的（见 `paneFrameIssue`）
-  if (frame.issue) {
-    if (source.baseTrust !== "broken") {
-      source.baseTrust = "broken";
-      source.baseIssue = frame.issue;
-      // 窗头状态行会跟着写一句“行号不可信”（`statParts`）—— 不能只在点定位时才说。
-    }
-    return;
-  }
-  if (frame.base !== null && frame.base >= 0) {
-    source.baseIndex = frame.base;
-    // 这个边界被服务端的行号**验证过** ⇒ “假定第 1 行”的前提成立，可以升级。
-    if (source.baseTrust === "assumed") source.baseTrust = "exact";
-  }
-}
 
 /* 这一窗现在能不能按**文件行号**定位（纯函数：给现场，回答"不能的话为什么"）。
  *
@@ -1538,19 +1360,6 @@ function applyStreamFrame(source, frame) {
  *    （它的行身份是事件号）⇒ 重放被截断不影响它按事件号定位（那条路在
  *    `locatePaneLines` 里另算）。但**按行号**给它的坐标会被如实拒掉 —— 宁可说清楚。
  * ⚠️ 四条规则与"宁可不定位、不瞎跳"是同一条（需求 §8）：宁可明说定位不了。 */
-function paneFrameIssue(source, replayTruncated) {
-  if (!source) return "";
-  if (source.derived) return "";
-  if (source.baseTrust === "broken") {
-    return source.baseIssue || "这一窗的实时行有缺口，行号不可信";
-  }
-  // ⚠️ `streamed` 那一半不能少：证据装载/区间装载的窗**不是**从 SSE 接的，
-  //    它们的基准确来自响应头 —— 那一屏不该因为"这一页曾经重放被截断"而被降级。
-  if (source.baseTrust === "assumed" && source.streamed && replayTruncated) {
-    return "这一窗是刷新之后接上来的（积压被截断过），窗口行号不等于证据文件的行号";
-  }
-  return "";
-}
 
 /* `defer`：只进模型，**先不落 DOM**（批量写的那条路用它 —— 一批的事件攒够了
  * 再一次性 renderPending，而不是每条事件都走一遍 DOM + 四个窗口的状态行）。
