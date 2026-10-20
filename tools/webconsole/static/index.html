@@ -538,6 +538,15 @@
                 <option value="lf">LF</option>
                 <option value="crlf">CRLF</option>
               </select>
+              <select id="observeLineEnding" aria-label="行结束符">
+                <option value="cr">CR</option>
+                <option value="lf">LF</option>
+                <option value="crlf">CRLF</option>
+              </select>
+        <select id="observeBackspace" title="退格键发哪个字节：嵌入式 shell 多数只认 BS（0x08），现代终端用 DEL（0x7F）">
+          <option value="del">退格 DEL</option>
+          <option value="bs">退格 BS</option>
+        </select>
             </label>
             <button type="button" id="observeCmdSend" class="primary" disabled>发送</button>
             <span class="cmd-hint" id="observeCmdHint"></span>

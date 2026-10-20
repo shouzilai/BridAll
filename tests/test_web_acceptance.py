@@ -1438,6 +1438,66 @@ def check_empty_enter_still_sends_a_newline() -> None:
     )
 
 
+def check_backspace_is_selectable() -> None:
+    """退格键发哪个字节可选：有的 shell 只认 0x08，有的只认 0x7F。"""
+    print("\n[18] 命令框：退格键可选 DEL 或 BS")
+    index_html = (CONSOLE_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    observe_py = (CONSOLE_DIR / "observe.py").read_text(encoding="utf-8")
+    center_py = (CONSOLE_DIR / "observe_center.py").read_text(encoding="utf-8")
+    server_py = (CONSOLE_DIR / "server.py").read_text(encoding="utf-8")
+    check(
+        "页面有退格键选择器（del / bs 两个选项）",
+        'id="observeBackspace"' in index_html
+        and 'value="del"' in index_html
+        and 'value="bs"' in index_html,
+        "",
+    )
+    keys_posts = app_js.count('postJson("/api/observe/keys"')
+    with_bs = app_js.count("backspace: currentBackspace()")
+    check(
+        "两条发键路径都带上退格键选择",
+        keys_posts >= 2 and with_bs >= 2,
+        f"发键 {keys_posts} 处 / 带 backspace {with_bs} 处",
+    )
+    check(
+        "选择记进偏好（刷新后还在）",
+        'saved.backspace === "bs" ? "bs" : "del"' in app_js
+        and "app.prefs.backspace = currentBackspace()" in app_js,
+        "",
+    )
+    check(
+        "服务端把 backspace 透传给发键",
+        "def send_keys(self, keys: object, backspace: object = None)" in observe_py
+        and 'body.get("backspace")' in server_py,
+        "",
+    )
+    check(
+        "中心层也把 backspace 往下传（漏一层就是 500）",
+        "def send_keys(self, keys: object, backspace: object = None) -> dict[str, Any]:\n        return self.session().send_keys(keys, backspace)"
+        in center_py,
+        "",
+    )
+    sys.path.insert(0, str(CONSOLE_DIR))
+    try:
+        import console_input  # noqa: PLC0415
+
+        bs_payload, _, _ = console_input.build_keys_payload(
+            [{"key": "Backspace"}], line_ending="crlf", backspace="bs"
+        )
+        del_payload, _, _ = console_input.build_keys_payload(
+            [{"key": "Backspace"}], line_ending="crlf", backspace="del"
+        )
+    finally:
+        if str(CONSOLE_DIR) in sys.path:
+            sys.path.remove(str(CONSOLE_DIR))
+    check(
+        "bs 发 0x08、del 发 0x7F（不是同一个字节）",
+        bs_payload == b"\x08" and del_payload == b"\x7f",
+        f"bs={bs_payload!r} del={del_payload!r}",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1457,6 +1517,7 @@ def main() -> int:
     check_run_preview_summarizes_before_start()
     check_dangerous_actions_confirm_in_page()
     check_empty_enter_still_sends_a_newline()
+    check_backspace_is_selectable()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))

@@ -261,8 +261,8 @@ class ObserveCenter:
     def send(self, *, mode: str, text: str, line_ending: object = None) -> dict[str, Any]:
         return self.session().send(mode=mode, text=text, line_ending=line_ending)
 
-    def send_keys(self, keys: object) -> dict[str, Any]:
-        return self.session().send_keys(keys)
+    def send_keys(self, keys: object, backspace: object = None) -> dict[str, Any]:
+        return self.session().send_keys(keys, backspace)
 
     def query_identity(self) -> dict[str, Any]:
         return self.session().query_identity()

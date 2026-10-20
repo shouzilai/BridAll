@@ -1025,7 +1025,7 @@ class ObserveSession:
             raise ObserveError(str(error), status=400) from None
         return self._write_tx(payload, source=source, display=display)
 
-    def send_keys(self, keys: object) -> dict[str, Any]:
+    def send_keys(self, keys: object, backspace: object = None) -> dict[str, Any]:
         """终端直输：一批按键 → 一段字节 → **一次** write（需求 §4.2 / §5.2）。
 
         - 按键 → 字节的映射只有 `console_input.build_keys_payload()` 一份实现：
@@ -1040,7 +1040,9 @@ class ObserveSession:
             payload, display, labels = build_keys_payload(
                 keys,
                 line_ending=getattr(target, "line_ending", None),
-                backspace=getattr(target, "terminal_backspace", None),
+                # 退格键：本次调用指定 > 设备声明 > 默认。嵌入式 shell 有的只认 0x08（`\b`），
+                # 有的只认 0x7F（DEL）；发错的那个既不删字符、还会回显一个方块。
+                backspace=backspace if backspace is not None else getattr(target, "terminal_backspace", None),
             )
         except ValueError as error:
             raise ObserveError(str(error), status=400) from None

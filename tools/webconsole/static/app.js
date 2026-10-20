@@ -2796,6 +2796,8 @@ function loadPrefs() {
       cmdHeight: clampCmdHeight(savedObserve.cmdHeight),
       cmdCollapsed: savedObserve.cmdCollapsed === true,
     },
+    // 退格键发 DEL(0x7F) 还是 BS(0x08)：刷新后保持用户选的那一个。
+    backspace: saved.backspace === "bs" ? "bs" : "del",
     // 两个指标窗格各选了哪个指标：刷新后还是自己选的那两个。
     metrics: loadMetricPanes(saved.metrics),
     // 时间窗与纵轴刻度也是阅读偏好（同一份数据，看整体还是看抖动）。
@@ -4926,6 +4928,7 @@ function renderObserve(observe) {
   renderObserveTargets(observe);
   renderLiveTests();
   applyLineEndingDefault(observe);
+  applyBackspaceDefault(observe);
   // 捕获状态跟“连没连上”有关：没连着就不把键盘给窗口（没设备可发字节）。
   // 平台不识别固件能力，所以这里不判断“支持不支持终端”。
   if (!captureConnected()) releaseCapture();
@@ -5605,6 +5608,13 @@ function currentLineEnding() {
   return $("observeLineEnding") ? $("observeLineEnding").value : "crlf";
 }
 
+/* 退格键发哪个字节：`del` = 0x7F（现代终端），`bs` = 0x08（嵌入式 shell 常见）。
+ * ⚠️ 发错的那个既不删字符、设备还会回显一个方块 —— 所以这一项要**能当场切**。
+ * 设备声明过就用声明的；用户在页面上换过就记住他的选择。 */
+function currentBackspace() {
+  return $("observeBackspace") ? $("observeBackspace").value : "del";
+}
+
 function refreshCmdHint() {
   const hint = $("observeCmdHint");
   if (!hint) return;
@@ -5616,6 +5626,19 @@ function refreshCmdHint() {
 
 /* 设备/项目配置里的默认行结束符（需求 §8）：只在**换设备**时套用，
  * 不动用户当前的选择（他可能刚手动改成 LF）。 */
+function applyBackspaceDefault(observe) {
+  const select = $("observeBackspace");
+  if (!select || !observe || !observe.terminal) return;
+  const target = observe.device || observe.target;
+  const key = target ? target.key : "";
+  if (!key || app.cmdBackspaceDevice === key) return;
+  app.cmdBackspaceDevice = key;
+  // 用户手选过的值优先（存在偏好里）：他刚踩过的坑不该因为换设备又被复原。
+  const saved = app.prefs && app.prefs.backspace;
+  select.value = saved || observe.terminal.backspace || "del";
+  if (app.prefs) { app.prefs.backspace = select.value; savePrefs(); }
+}
+
 function applyLineEndingDefault(observe) {
   const select = $("observeLineEnding");
   if (!select || !observe || !observe.commands) return;
@@ -5640,6 +5663,7 @@ async function consoleSend() {
     try {
       const payload = await postJson("/api/observe/keys", {
         keys: [{ key: "Enter", ctrl: false, alt: false, shift: false, meta: false }],
+        backspace: currentBackspace(),
       });
       if (payload.observe) renderObserve(payload.observe);
       const sent = payload.sent || {};
@@ -5837,7 +5861,7 @@ async function flushTerminal() {
   const batch = takeTerminalBatch(state);
   state.inFlight = true;
   try {
-    const payload = await postJson("/api/observe/keys", { keys: batch });
+    const payload = await postJson("/api/observe/keys", { keys: batch, backspace: currentBackspace() });
     if (payload.observe) renderObserve(payload.observe);
     const sent = payload.sent || {};
     state.bytes += sent.length || 0;
@@ -9950,6 +9974,13 @@ function boot() {
   }
   // 采集时长也是摘要的一部分：改数字就重算那一行（不触发任何动作）。
   if ($("observeSeconds")) $("observeSeconds").addEventListener("input", renderRunPreview);
+  if ($("observeBackspace")) {
+    $("observeBackspace").addEventListener("change", () => {
+      app.prefs.backspace = currentBackspace();
+      savePrefs();
+      refreshCmdHint();
+    });
+  }
   if ($("runTarget")) $("runTarget").addEventListener("change", () => renderRunFirmwares());
   // 换固件：只换选中项（目标跟着它推导，套件跟着换）—— 不连接、不烧录。
   if ($("runFirmware")) $("runFirmware").addEventListener("change", () => {

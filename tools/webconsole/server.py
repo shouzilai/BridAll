@@ -1074,7 +1074,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         if path == "/api/observe/keys":
             # 终端直输：一批**按键描述**（不是字节）。按键 → 字节的换算只在服务端做，
             # 页面只说"按了什么"—— 于是映射只有一份实现（需求 §4.2）。
-            sent = self.observe.send_keys(body.get("keys"))
+            sent = self.observe.send_keys(body.get("keys"), body.get("backspace"))
             return self._send_json(
                 {"sent": sent, "observe": self.observe.snapshot()}, status=202
             )
