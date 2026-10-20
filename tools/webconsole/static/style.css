@@ -29,6 +29,8 @@
   --warn: #e2b341;
   --warn-border: #6b5723;
   --accent-line: #2c5a8c;
+  /* WEBUI-001 §9：选区颜色（两套主题各自一份，不写死到组件里）。 */
+  --sel: rgba(76, 158, 248, .35);
   /* ---- 日志工作区（五窗正文、阶段卡、工具条按钮、滚动条）----
      深色调试 = 现有取值（外观零变化）；暖色工作台在 `[data-theme="warm"]` 里覆盖同一批名字。
      ⚠️ 规则里不再散落这批颜色：组件只消费令牌。 */
@@ -136,6 +138,8 @@
   --warn: #885000;
   --warn-border: #7a4a00;
   --accent-line: #b26b2a;
+  /* WEBUI-001 §9：暖色主题的选区底色（浅底上用暖色，不出现蓝）。 */
+  --sel: rgba(168, 78, 11, .22);
   /* “当前窗口”那一圈描边：暖色下跟着暖色走（深色主题那个蓝不许漏到浅底上来）。 */
   --pane-active-border: #c2762f;
   --pane-active-glow: 0 0 18px -6px rgba(217, 119, 42, .75);
@@ -2076,3 +2080,67 @@ textarea:focus-visible,
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+/* ======================================================================
+ * WEBUI-001 §9：文本选择边界
+ *
+ * 默认规则是“证据可复制、控件不可选”：
+ *  - 日志正文、诊断详情、错误原因、命令/路径/哈希、状态句子都能选；
+ *  - 页头/工具条/窗格标题栏/按钮/chip/分隔条/拖动柄不可选
+ *    （双击窗格标题只折叠/展开，不会选中半截文字）。
+ * ⚠️ 只写**静态**规则：拖动时不再动态切 user-select（那会打断浏览器原生选区，
+ *    历史上有判据盯着这一点）。
+ * ⚠️ `user-select` 可继承：`.pane-title` 自己没有规则，靠 `.pane-head` 这一层生效。
+ * ====================================================================== */
+::selection { background: var(--sel); }
+
+.log-lines,
+.message,
+.run-preview,
+.run-progress,
+.stage-list,
+.pane-why,
+.observe-note,
+.ident-detail,
+.panic,
+.asserts,
+.risk-body,
+#runSub,
+#observeStat,
+#sessionNote,
+#offlineDetail,
+td .links,
+.dh-summary,
+.dh-error,
+.dh-flash { user-select: text; }
+
+.topbar,
+.brand,
+.ws-head,
+.pane-head,
+.pane-title,
+.pane-find,
+.pane-tools,
+.pane-menu,
+.split-bar,
+.cmd-resize,
+.cp-head,
+.mode-btn,
+.theme-btn,
+.theme-switch,
+.doctor-link,
+.tool-ico,
+.fold-ico,
+.pane-link,
+.pane-mini,
+.pane-capture,
+.pane-stat,
+.pending-pill,
+.ident-chip,
+.observe-counts,
+.ws-stat,
+.find-hits,
+.stage > details > summary,
+button,
+select,
+label { user-select: none; }

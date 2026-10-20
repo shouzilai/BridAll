@@ -153,6 +153,48 @@ async function runDesktop(browser) {
   const width = await page.evaluate(() => window.innerWidth);
   check('视口真的是 1280（不是被忽略的默认值）', width === 1280, String(width));
 
+  // ---- 文本选择边界（WEBUI-001 §9）：证据可复制、控件不可选。
+  // ⚠️ 这一条曾经**只在内部仓有**：公开仓同步时漏了整块 `user-select` 规则，
+  //    于是窗格标题可以拖出选区（用户实测发现）。所以这里按**浏览器算出来的样式**判，
+  //    而不是看 CSS 里有没有那几行字。
+  const selectBoundary = await page.evaluate(() => {
+    const title = document.querySelector('.pane-title');
+    const head = title && title.closest('.pane-head');
+    const lines = document.querySelector('.log-lines');
+    const styleOf = (element) => (element ? getComputedStyle(element).userSelect : '(缺元素)');
+    return {
+      title: styleOf(title),
+      head: styleOf(head),
+      lines: styleOf(lines),
+      button: styleOf(document.querySelector('button')),
+      selToken: getComputedStyle(document.documentElement).getPropertyValue('--sel').trim(),
+    };
+  });
+  check('窗格标题不可选（user-select: none）',
+    selectBoundary.title === 'none' && selectBoundary.head === 'none', JSON.stringify(selectBoundary));
+  check('日志正文仍然可选（证据要能复制）', selectBoundary.lines === 'text', selectBoundary.lines);
+  check('按钮不可选，且两套主题都有选区色', selectBoundary.button === 'none' && Boolean(selectBoundary.selToken),
+    selectBoundary.selToken);
+
+  // 双击窗格标题：只翻转折叠状态，**不形成选区**（这是“标题不可选”的用户可见结果）。
+  const dbl = await page.evaluate(() => {
+    const pane = document.querySelector('#pane-tool');
+    const title = pane && pane.querySelector('.pane-title');
+    if (!title) return { ok: false, why: '找不到 #pane-tool 的标题' };
+    const before = pane.dataset.collapsed;
+    title.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2, view: window }));
+    const afterFirst = { collapsed: pane.dataset.collapsed, selected: String(window.getSelection()).length };
+    // 再双击一次收回原状（后面几段还要用这一窗）
+    (document.querySelector('#pane-tool .pane-title') || title).dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2, view: window }),
+    );
+    return { ok: true, before, afterFirst, restored: pane.dataset.collapsed };
+  });
+  check('双击窗格标题只折叠、不选中文字',
+    dbl.ok && dbl.afterFirst.collapsed !== dbl.before && dbl.afterFirst.selected === 0
+      && dbl.restored === dbl.before,
+    JSON.stringify(dbl));
+
   for (const [mode, pane] of [['auto', '#autoPanel'], ['live', '#liveStatus'], ['offline', '#offlinePanel']]) {
     await page.click('.mode-btn[data-mode="' + mode + '"]');
     check('入口能切到 ' + pane, await page.locator(pane).isVisible());

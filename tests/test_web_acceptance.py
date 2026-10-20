@@ -1498,6 +1498,44 @@ def check_backspace_is_selectable() -> None:
     )
 
 
+def check_selection_boundary_is_static() -> None:
+    """证据可复制、控件不可选：`user-select` 边界必须是**静态**规则。"""
+    print("\n[19] 文本选择边界：窗格标题不可选、日志正文可选")
+    style_css = (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8")
+    doctor_css = (CONSOLE_DIR / "static" / "doctor.css").read_text(encoding="utf-8")
+    tail = style_css[style_css.index("文本选择边界"):] if "文本选择边界" in style_css else ""
+    none_block = tail.split("user-select: none;")[0] if "user-select: none;" in tail else ""
+    text_block = tail.split("user-select: text;")[0] if "user-select: text;" in tail else ""
+    check(
+        "标题栏在“不可选”那一组里（.pane-head / .pane-title）",
+        ".pane-head," in none_block and ".pane-title," in none_block,
+        "",
+    )
+    check(
+        "日志正文在“可选”那一组里（.log-lines）",
+        ".log-lines," in text_block,
+        "",
+    )
+    check(
+        "两套主题各有选区色，且 ::selection 用它",
+        style_css.count("--sel:") >= 2 and "::selection { background: var(--sel); }" in style_css,
+        f"--sel {style_css.count('--sel:')} 处",
+    )
+    check(
+        "拖动时不动态切 user-select（只写静态规则）",
+        "style.setProperty(\"--user-select\"" not in style_css
+        and "user-select: none" not in style_css.split("文本选择边界")[0].split("\n")[-1],
+        "",
+    )
+    check(
+        "体检页同一口径（可选：事实/错误；不可选：工具条/按钮）",
+        "::selection { background: var(--sel); }" in doctor_css
+        and ".dh-flash { user-select: text; }" in doctor_css
+        and "label { user-select: none; }" in doctor_css,
+        "",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1518,6 +1556,7 @@ def main() -> int:
     check_dangerous_actions_confirm_in_page()
     check_empty_enter_still_sends_a_newline()
     check_backspace_is_selectable()
+    check_selection_boundary_is_static()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))

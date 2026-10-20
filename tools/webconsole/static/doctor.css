@@ -16,6 +16,8 @@
   --skip: #7f8c9c;
   --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
   --scrollbar-w: 6px;
+  /* WEBUI-001 §9：选区底色（与工作台同一个口径，两套主题各一份）。 */
+  --sel: rgba(76, 158, 248, .35);
 }
 
 :root[data-theme="warm"] {
@@ -32,6 +34,7 @@
   --fail: #b13d32;
   --warn: #885000;
   --skip: #756052;
+  --sel: rgba(168, 78, 11, .22);
 }
 
 * { box-sizing: border-box; }
@@ -275,6 +278,32 @@ textarea:focus-visible,
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+/* WEBUI-001 §9：体检页的文本选择边界（与工作台同一口径：证据/事实可选，控件/工具条不可选）。 */
+::selection { background: var(--sel); }
+
+#doctorSections,
+#doctorSections article,
+.dh-facts dd,
+.dh-actions li,
+.dh-error,
+.dh-flash { user-select: text; }
+
+.dh-head,
+.dh-tools,
+.theme-switch,
+.theme-btn,
+.dh-summary,
+.dh-badge,
+.dh-counts,
+.dh-when,
+.dh-filters,
+.dh-filter-buttons,
+.dh-show-all,
+.dh-actions h2,
+button,
+a,
+label { user-select: none; }
 
 @media (max-width: 640px) {
   .dh-facts { grid-template-columns: 1fr; }
