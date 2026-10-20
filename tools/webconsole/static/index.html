@@ -25,7 +25,7 @@
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="logo">PW</span>
+    <span class="logo">BA</span>
     <div>
       <h1>嵌入式实验与诊断工作台 <span class="tag">Workbench</span></h1>
     </div>
@@ -377,8 +377,7 @@
       <section class="log-pane" id="pane-tool" data-source="tool">
         <div class="pane-head">
           <div class="pane-row">
-            <span class="pane-title" title="PlatformIO stdout/stderr">工具输出</span>
-            <span class="pane-file">tool.log</span>
+            <span class="pane-title" title="PlatformIO stdout/stderr · 证据文件 tool.log（完整内容从这里下载）">工具输出</span>
             <button type="button" id="fold-tool" class="fold-ico" aria-expanded="true" aria-controls="find-tool" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
             <button type="button" id="full-tool" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
             <div class="pane-tools">
@@ -419,7 +418,6 @@
         <div class="pane-head">
           <div class="pane-row">
             <span class="pane-title" title="本轮 run 的阶段事件（用例或受控序列的每一步）· 双击这一行可把这一窗收成标签">测试阶段</span>
-            <span class="pane-file">阶段事件</span>
             <button type="button" id="fold-stage" class="fold-ico" aria-expanded="true" aria-controls="find-stage" title="收起这一窗的筛选行（Alt+F）：筛选条件仍然生效，省下的高度会分给日志区（各窗等高，所以是一起变高）" aria-label="收起或展开筛选行">▾</button>
             <button type="button" id="full-stage" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
             <div class="pane-tools">
@@ -448,8 +446,7 @@
       <section class="log-pane" id="pane-raw" data-source="raw">
         <div class="pane-head">
           <div class="pane-row">
-            <span class="pane-title" title="设备串口字节（不是固件镜像）">原始串口</span>
-            <span class="pane-file">raw.bin</span>
+            <span class="pane-title" title="设备串口字节（不是固件镜像）· 证据文件 raw.bin（完整内容从这里下载）">原始串口</span>
             <button type="button" class="pane-capture" id="cap-raw" aria-label="放开键盘"></button>
             <button type="button" id="fold-raw" class="fold-ico" aria-expanded="true" aria-controls="find-raw" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
             <button type="button" id="full-raw" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
@@ -486,8 +483,7 @@
       <section class="log-pane" id="pane-decoded" data-source="decoded">
         <div class="pane-head">
           <div class="pane-row">
-            <span class="pane-title" title="Token 解码结果：decode 步骤由 raw.bin 重新推导">解码日志</span>
-            <span class="pane-file">decoded.log</span>
+            <span class="pane-title" title="Token 解码结果：decode 步骤由 raw.bin 重新推导 · 证据文件 decoded.log（完整内容从这里下载）">解码日志</span>
             <button type="button" class="pane-capture" id="cap-decoded" aria-label="放开键盘"></button>
             <button type="button" id="fold-decoded" class="fold-ico" aria-expanded="true" aria-controls="find-decoded" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
             <button type="button" id="full-decoded" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
@@ -556,8 +552,7 @@
       <section class="log-pane" id="pane-events" data-source="events">
         <div class="pane-head">
           <div class="pane-row">
-            <span class="pane-title" title="结构化事件：一行一条，带 decoded.log 字节偏移">结构化事件</span>
-            <span class="pane-file">app_events.jsonl</span>
+            <span class="pane-title" title="结构化事件：一行一条，带 decoded.log 字节偏移 · 证据文件 app_events.jsonl（完整内容从这里下载）">结构化事件</span>
             <button type="button" id="fold-events" class="fold-ico" aria-expanded="true" aria-controls="find-events" title="收起这一窗的搜索与筛选行（Alt+F）：搜索条件仍然生效，省下的高度会分给日志区（四窗等高，所以是一起变高）" aria-label="收起或展开搜索与筛选行">▾</button>
             <button type="button" id="full-events" class="fold-ico" aria-pressed="false" title="只看这一个窗口（全屏）：Esc 退出，其他窗口的阅读位置会记住" aria-label="只看这一个窗口">全屏</button>
             <div class="pane-tools">
