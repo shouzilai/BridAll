@@ -1,6 +1,12 @@
 /* 嵌入式实验与诊断工作台 — 前端只读展示 + 受控意图，不直接接触串口。 */
 "use strict";
 
+/* HTTP 与 SSE 只有一个出口：`static/js/transport/client.js`。取名字时沿用页面原来的叫法
+ * （`getJson` / `postJson` 就是它的 `jsonGet` / `jsonPost`），调用点一个字都不用改。 */
+const {
+  jsonGet: getJson, jsonPost: postJson, textGet, rangeGet, createStream,
+} = globalThis.PWTransport;
+
 /* 纯模型住在 `static/js/model/*.js`，由页面按固定顺序先装载（见 `index.html`），这里只
  * 取它们的命名空间 —— 组合根不再保留这些函数的第二份实现。模型不读 DOM、不发请求、
  * 不读写浏览器存储、不设定时器，只接收值、返回值。 */
@@ -7056,16 +7062,6 @@ function openHistoryRun(runId) {
   window.location.hash = `run=${encodeURIComponent(runId)}`;
 }
 
-/* -------------------------------------------------------------------- fetch */
-async function getJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || `${url} -> HTTP ${response.status}`);
-  }
-  return payload;
-}
-
 /* 装载一次 run 到**自动验证那一屏**。
  *
  * `focus`（默认 true）= 这是一次**用户动作**（点历史里那一条 / URL 带 `#run=`）⇒
@@ -7160,16 +7156,8 @@ async function loadRun(runId, { focus = true } = {}) {
 
 /* raw.bin 是字节流（可能不是合法 UTF-8），所以它只能当二进制取回来再当文本看，
  * 下载入口仍然直接给原始字节。取不到时如实给空视图，不编造内容。 */
-async function fetchRawEvidence(runId) {
-  try {
-    const response = await fetch(
-      `/api/runs/${encodeURIComponent(runId)}/evidence/raw.bin`,
-      { cache: "no-store" }
-    );
-    return response.ok ? await response.text() : "";
-  } catch (error) {
-    return "";
-  }
+function fetchRawEvidence(runId) {
+  return textGet(`/api/runs/${encodeURIComponent(runId)}/evidence/raw.bin`);
 }
 
 function loadRunSources(view, store, detail, rawText, windows) {
@@ -7264,28 +7252,28 @@ async function loadWindowRange(id, range, { prepend = false, replace = false, li
   win.loading = true;
   updateLogIndicators(app.log);
   try {
-    const response = await fetch(win.url, {
-      cache: "no-store",
-      headers: lines
+    const response = await rangeGet(
+      win.url,
+      lines
         ? { "X-Line-Range": `${lines[0]}-${lines[1]}`, "X-Line-Base": "1" }
         : { Range: `bytes=${range[0]}-${range[1]}`, "X-Line-Base": "1" },
-      signal: controller ? controller.signal : undefined,
-    });
+      controller ? controller.signal : null
+    );
     // ⚠️ 两道闸门：来源换了（`source.window !== win`）或又发了一轮（generation 变了）
     //  ⇒ 这份响应是**旧对象**的，绝不能写进去。
     if (source.window !== win || win.generation !== generation) return false;
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const buffer = new Uint8Array(await response.arrayBuffer());
+    const buffer = response.buffer;
     if (source.window !== win || win.generation !== generation) return false;
-    const total = parseContentRangeTotal(response.headers.get("Content-Range"));
+    const total = parseContentRangeTotal(response.header("Content-Range"));
     if (Number.isFinite(total) && total > 0) win.totalBytes = total;
     // 设备字节可能不是合法 UTF-8：TextDecoder 默认把坏字节换成 U+FFFD，
     // 不抛异常（"看着像乱码"比"整窗报错"诚实）。
     const text = new TextDecoder("utf-8").decode(buffer);
     // 服务端把“这一段的第一行是文件第几行”带在响应头里（没给就是 `null`）。
-    const base = lineBaseIndex(response.headers.get("X-Line-Base"));
+    const base = lineBaseIndex(response.header("X-Line-Base"));
     // 按行装载时，真正的字节区间在 `Content-Range` 里（那时 `range` 是空的）。
-    const covered = /bytes (\d+)-(\d+)\//.exec(response.headers.get("Content-Range") || "");
+    const covered = /bytes (\d+)-(\d+)\//.exec(response.header("Content-Range") || "");
     const loaded = covered ? [Number(covered[1]), Number(covered[2])] : range;
     win.ranges = windowRangesAfter(win.ranges, loaded, { replace });
     if (prepend) {
@@ -8369,20 +8357,15 @@ function rebaseEventCursor() {
 
 function connectStream() {
   if (app.source) app.source.close();
-  const source = new EventSource(`/api/stream?since=${app.lastSeq}`);
+  const source = createStream(`/api/stream?since=${app.lastSeq}`, {
+    onMessage: (message) => handleEvent(JSON.parse(message.data)),
+    onError: (failed) => {
+      failed.close();
+      if (app.source === failed) app.source = null;
+      setTimeout(connectStream, 2000);
+    },
+  });
   app.source = source;
-  source.onmessage = (message) => {
-    try {
-      handleEvent(JSON.parse(message.data));
-    } catch (error) {
-      /* ignore malformed frame */
-    }
-  };
-  source.onerror = () => {
-    source.close();
-    if (app.source === source) app.source = null;
-    setTimeout(connectStream, 2000);
-  };
 }
 
 /* ------------------------------------------------- 页面是不是旧的（） */
@@ -8817,17 +8800,6 @@ async function cancelRun() {
   } catch (error) {
     showMessage(`取消失败：${error.message}`, "fail");
   }
-}
-
-async function postJson(url, body) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-  return payload;
 }
 
 /* -------------------------------------------------------------------- boot */

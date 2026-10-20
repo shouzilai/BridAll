@@ -1253,6 +1253,48 @@ def check_frontend_models_live_outside_the_page() -> None:
         running.close()
 
 
+def check_transport_is_the_only_way_out() -> None:
+    """联网只有一个出口：页面里不再有 `fetch(` 与 `new EventSource`，全部走 transport。"""
+    print("\n[13] 传输层唯一出口：页面只经 `static/js/transport/client.js` 联网")
+    static_dir = CONSOLE_DIR / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    client_js = (static_dir / "js" / "transport" / "client.js").read_text(encoding="utf-8")
+    index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+    check("页面里没有直接的 fetch(", "fetch(" not in app_js, "")
+    check("页面里没有直接的 EventSource", "new EventSource" not in app_js, "")
+    check(
+        "页面从 PWTransport 取名字",
+        "} = globalThis.PWTransport;" in app_js
+        and "jsonGet: getJson" in app_js and "jsonPost: postJson" in app_js,
+        "",
+    )
+    check(
+        "HTTP 与 SSE 都在 transport 里（各一处）",
+        client_js.count("await fetch(") == 4
+        and client_js.count("new EventSource(") == 1
+        and "jsonGet" in client_js and "jsonPost" in client_js and "rangeGet" in client_js,
+        "fetch=%d" % client_js.count("await fetch("),
+    )
+    check(
+        "transport 在 app.js 之前装载",
+        '/static/js/transport/client.js' in index_html
+        and index_html.index('/static/js/transport/client.js') < index_html.index('/static/app.js'),
+        "",
+    )
+    check(
+        "transport 不碰 DOM / 存储 / 定时器",
+        not re.search(r"\b(document|localStorage|sessionStorage|setTimeout|setInterval)\b", client_js),
+        "",
+    )
+    check(
+        "区间装载仍读得到 Content-Range 与行号基准",
+        "header: (name) => response.headers.get(name)" in client_js
+        and 'response.header("Content-Range")' in app_js
+        and 'response.header("X-Line-Base")' in app_js,
+        "",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1267,12 +1309,13 @@ def main() -> int:
     check_warm_log_surfaces_are_light()
     check_raw_terminal_view()
     check_frontend_models_live_outside_the_page()
+    check_transport_is_the_only_way_out()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
         return 1
     print(
-        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / "
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / "
         "连接生命周期 / 收发 / 串口参数 / 公共传输实现与失败面）"
     )
     return 0
