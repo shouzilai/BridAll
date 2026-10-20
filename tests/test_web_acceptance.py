@@ -1414,6 +1414,30 @@ def check_dangerous_actions_confirm_in_page() -> None:
     )
 
 
+def check_empty_enter_still_sends_a_newline() -> None:
+    """命令框按回车且内容为空时：发一个换行（不是静默什么都不做）。"""
+    print("\n[17] 命令框：空回车也要真的发出去")
+    app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    body = app_js.split("async function consoleSend() {", 1)[1].split("function wireConsoleInput()", 1)[0]
+    check(
+        "空内容走按键路径（不是 return）",
+        'if (!text.trim()) {' in body
+        and 'postJson("/api/observe/keys"' in body
+        and 'key: "Enter"' in body,
+        "",
+    )
+    check(
+        "没连接时说明为什么没发（不再无声）",
+        "没有连接设备：先选定设备并连接，再发字节" in body and "captureConnected()" in body,
+        "",
+    )
+    check(
+        "发出去之后如实报字节数与显示",
+        "已发送 ${sent.length} B：${sent.display}" in body,
+        "",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1432,12 +1456,13 @@ def main() -> int:
     check_preferences_keep_the_old_key_working()
     check_run_preview_summarizes_before_start()
     check_dangerous_actions_confirm_in_page()
+    check_empty_enter_still_sends_a_newline()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
         return 1
     print(
-        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / 偏好键兼容 / 运行前摘要 / 危险动作确认 / "
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / 偏好键兼容 / 运行前摘要 / 危险动作确认 / 空回车 / "
         "连接生命周期 / 收发 / 串口参数 / 公共传输实现与失败面）"
     )
     return 0

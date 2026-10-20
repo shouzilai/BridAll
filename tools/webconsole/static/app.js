@@ -5629,7 +5629,27 @@ function applyLineEndingDefault(observe) {
 async function consoleSend() {
   const mode = currentCmdMode();
   const text = $("observeCmdInput") ? $("observeCmdInput").value : "";
-  if (!text.trim()) return;
+  if (!text.trim()) {
+    // 空回车 = **只把行结束符发下去**（与在窗口里直接敲回车同一个效果）。
+    // 以前这里直接 `return`：用户按了回车，屏幕上什么都不会发生，也没有一句说明。
+    if (!captureConnected()) {
+      showMessage("没有连接设备：先选定设备并连接，再发字节", "warn", "observe");
+      refreshCmdHint();
+      return;
+    }
+    try {
+      const payload = await postJson("/api/observe/keys", {
+        keys: [{ key: "Enter", ctrl: false, alt: false, shift: false, meta: false }],
+      });
+      if (payload.observe) renderObserve(payload.observe);
+      const sent = payload.sent || {};
+      showMessage(`已发送 ${sent.length} B：${sent.display}`, "pass", "observe");
+    } catch (error) {
+      showMessage(`发送失败：${error.message}`, "fail", "observe");
+    }
+    refreshCmdHint();
+    return;
+  }
   if (mode === "hex") {
     const parsed = parseHexText(text);
     if (!parsed.ok) {
