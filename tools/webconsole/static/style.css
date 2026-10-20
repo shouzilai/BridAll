@@ -768,15 +768,17 @@ h1, h2 { margin: 0; font-weight: 600; }
 
 .pane-capture {
   display: none;
-  font-family: var(--mono);
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--pass);
-  color: var(--pass);
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--pass);
   cursor: pointer;
-  background: transparent;
 }
+
+.pane-capture:hover:not(:disabled) { background: var(--ok-border); }
 
 .log-pane[data-capture="1"] .pane-capture { display: inline-block; }
 

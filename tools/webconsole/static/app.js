@@ -5748,7 +5748,11 @@ function renderCapture() {
     if (pane) pane.dataset.capture = on ? "1" : "0";
     if (body) body.dataset.capture = on ? "1" : "0";
     if (chip) {
-      chip.textContent = on ? captureStateText(paneId) : "";
+      // 窗口头只留一个绿色实心圆点（CSS 画），含义放进 title 与 aria-label。
+  chip.textContent = "";
+  chip.title = on
+    ? "点这个圆点放开键盘：放开之后页面快捷键恢复，按键不再发给设备"
+    : captureStateText(paneId);
       chip.title = "点这里放开键盘（也可以按 Esc）：放开之后页面快捷键恢复，按键不再发给设备";
     }
   }
