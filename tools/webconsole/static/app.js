@@ -179,6 +179,40 @@ const STEP_ORDER = ["precheck", "build", "upload", "observe", "decode", "assert"
  * 会把它当成“读不到偏好”，于是一整类偏好（字号/字体/哪些窗口收起了筛选行）
  * 刷新后永远回到默认值，而且完全不报错（）。 */
 const PREFS_KEY = "pw.logPrefs";
+/* 本机偏好键是 `ba.*`（产品名 BridAll / BA），`pw.*` 保留为**兼容别名**：
+ * 读取时 ba 优先、读不到退回 pw；写入时两份都写（旧页面与旧书签仍读 pw）。
+ * ⚠️ 常量行本身仍是 `pw.*` 字面量：`PW.prefs.key` / `PW.modes.key` / `console.historyKey`
+ *    是已发布的调试契约，改名要按 hook 契约的升级约定单独处理。 */
+function prefAliasKey(key) {
+  return String(key || "").replace(/^pw\./, "ba.");
+}
+
+function readPref(key) {
+  try {
+    const next = localStorage.getItem(prefAliasKey(key));
+    if (next !== null) return next;
+  } catch (error) {
+    /* 读不到新键就退旧键 */
+  }
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function writePref(key, value) {
+  try {
+    localStorage.setItem(prefAliasKey(key), value);
+  } catch (error) {
+    /* 存不下不影响使用 */
+  }
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    /* 同上 */
+  }
+}
 /* 分栏宽度的上下限（比例）与最大栏数：初始化读偏好、以及 normalizeSplit 都会用到，
  * 所以必须声明在 `app` 之前（踩过  的 TDZ 坑）。 */
 /* 最大栏数 = 窗口数（2026-10-10 起是 5：测试阶段也是一个窗口）。
@@ -224,7 +258,7 @@ const CMD_HISTORY_MAX = 50;
 
 function loadCmdHistory() {
   try {
-    const raw = localStorage.getItem(CMD_HISTORY_KEY);
+    const raw = readPref(CMD_HISTORY_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch (error) {
@@ -234,7 +268,7 @@ function loadCmdHistory() {
 
 function loadMode() {
   try {
-    const stored = localStorage.getItem(MODE_KEY);
+    const stored = readPref(MODE_KEY);
     if (MODE_IDS.includes(stored)) return stored;
   } catch (error) {
     /* 本机读不到就用默认模式，不影响使用 */
@@ -2722,7 +2756,7 @@ function expandAllPanes(store) {
 function loadPrefs() {
   let saved = {};
   try {
-    const raw = globalThis.localStorage ? globalThis.localStorage.getItem(PREFS_KEY) : null;
+    const raw = globalThis.localStorage ? readPref(PREFS_KEY) : null;
     saved = JSON.parse(raw || "{}") || {};
   } catch (error) { saved = {}; }
   const size = Number(saved.fontSize);
@@ -2778,7 +2812,7 @@ function tailSegment(path) {
 function savePrefs() {
   try {
     if (globalThis.localStorage) {
-      globalThis.localStorage.setItem(PREFS_KEY, JSON.stringify(app.prefs));
+      writePref(PREFS_KEY, JSON.stringify(app.prefs));
     }
   } catch (error) { /* 存不了就算了，不影响使用 */ }
 }
@@ -4227,7 +4261,7 @@ const THEME_ORDER = ["dark", "warm"];
 
 function loadTheme() {
   try {
-    const stored = localStorage.getItem(THEME_KEY);
+    const stored = readPref(THEME_KEY);
     if (THEME_ORDER.includes(stored)) return stored;
   } catch (error) {
     /* 本机读不到就用默认主题 */
@@ -4240,7 +4274,7 @@ function setTheme(themeId) {
   document.documentElement.dataset.theme = next;
   document.documentElement.style.colorScheme = next === "warm" ? "light" : "dark";
   try {
-    localStorage.setItem(THEME_KEY, next);
+    writePref(THEME_KEY, next);
   } catch (error) {
     /* 保存失败时仍按当前选择渲染 */
   }
@@ -5508,7 +5542,7 @@ function applyMode() {
 function setMode(mode) {
   app.mode = MODE_IDS.includes(mode) ? mode : "auto";
   try {
-    localStorage.setItem(MODE_KEY, app.mode);
+    writePref(MODE_KEY, app.mode);
   } catch (error) {
     /* 本机存不下也不影响使用 */
   }
@@ -5529,7 +5563,7 @@ function setMode(mode) {
 
 function saveCmdHistory() {
   try {
-    localStorage.setItem(CMD_HISTORY_KEY, JSON.stringify(app.cmdHistory));
+    writePref(CMD_HISTORY_KEY, JSON.stringify(app.cmdHistory));
   } catch (error) {
     /* 存不下也不影响本次使用 */
   }

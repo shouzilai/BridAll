@@ -14,6 +14,7 @@
 const SCOPE_ORDER = ["platform", "target", "hardware"];
 const HARDWARE_QUERY = "?hardware=1";
 const THEME_KEY = "pw.theme";
+const THEME_ALIAS_KEY = "ba.theme";   // 新键；`pw.theme` 是兼容别名（旧页面与旧书签仍读它）
 const THEME_ORDER = ["dark", "warm"];
 /*: 结果与状态的**用户语言**（页面上不再出现 PASS / WARN 这类内部枚举）。
  * ⚠️ 这只是一张名字表：判定仍然只有服务端那一份（`report.result` / `row.status`）——
@@ -44,7 +45,10 @@ function el(id) {
 }
 
 function loadTheme() {
-  const raw = globalThis.localStorage ? globalThis.localStorage.getItem(THEME_KEY) : null;
+  // 新键是 `ba.theme`，`pw.theme` 是兼容别名：读不到新键再退旧的。
+  const raw = globalThis.localStorage
+    ? (globalThis.localStorage.getItem(THEME_ALIAS_KEY) || globalThis.localStorage.getItem(THEME_KEY))
+    : null;
   return THEME_ORDER.includes(raw) ? raw : "dark";
 }
 
@@ -53,6 +57,7 @@ function applyTheme(themeId) {
   document.documentElement.dataset.theme = next;
   document.documentElement.style.colorScheme = next === "warm" ? "light" : "dark";
   try {
+    globalThis.localStorage.setItem(THEME_ALIAS_KEY, next);
     globalThis.localStorage.setItem(THEME_KEY, next);
   } catch (error) {
     /* 保存失败时仍按当前选择渲染 */

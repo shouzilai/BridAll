@@ -7,7 +7,9 @@
 <script>
   (() => {
     try {
-      const raw = window.localStorage.getItem('pw.theme');
+      // 新键是 `ba.theme`（产品名 BridAll / BA），`pw.theme` 是兼容别名：读不到新键再退旧的。
+      const raw = window.localStorage.getItem('ba.theme')
+        || window.localStorage.getItem('pw.theme');
       const theme = raw === 'warm' ? 'warm' : 'dark';
       document.documentElement.dataset.theme = theme;
       document.documentElement.style.colorScheme = theme === 'warm' ? 'light' : 'dark';

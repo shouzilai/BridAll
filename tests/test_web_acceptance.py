@@ -1304,6 +1304,44 @@ def check_transport_is_the_only_way_out() -> None:
     )
 
 
+def check_preferences_keep_the_old_key_working() -> None:
+    """本机偏好的新键是 `ba.*`，`pw.*` 保留为兼容别名：读 ba 优先、写两份都写。"""
+    print("\n[14] 偏好键兼容：`ba.*` 是新的，`pw.*` 仍读写")
+    static_dir = CONSOLE_DIR / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+    doctor_html = (static_dir / "doctor.html").read_text(encoding="utf-8")
+    doctor_js = (static_dir / "doctor.js").read_text(encoding="utf-8")
+    check(
+        "页面有键别名与读写封装",
+        "function prefAliasKey(key)" in app_js
+        and 'replace(/^pw\\./, "ba.")' in app_js
+        and "function readPref(key)" in app_js and "function writePref(key, value)" in app_js,
+        "",
+    )
+    direct = [line.strip() for line in app_js.splitlines()
+              if "localStorage.getItem(" in line or "localStorage.setItem(" in line]
+    check(
+        "页面其余地方只经封装读写（不许绕过双写）",
+        len(direct) == 4 and all("prefAliasKey" in line or line.endswith("getItem(key);") or line.endswith("setItem(key, value);") for line in direct),
+        str(direct)[:160],
+    )
+    check(
+        "两处主题引导都先读 ba.theme 再退 pw.theme",
+        "localStorage.getItem('ba.theme')" in index_html and "localStorage.getItem('pw.theme')" in index_html
+        and "localStorage.getItem('ba.theme')" in doctor_html and "localStorage.getItem('pw.theme')" in doctor_html,
+        "",
+    )
+    check(
+        "体检页写主题时两份都写",
+        'THEME_ALIAS_KEY = "ba.theme"' in doctor_js
+        and "setItem(THEME_ALIAS_KEY, next)" in doctor_js
+        and "setItem(THEME_KEY, next)" in doctor_js
+        and "getItem(THEME_ALIAS_KEY)" in doctor_js,
+        "",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1319,12 +1357,13 @@ def main() -> int:
     check_raw_terminal_view()
     check_frontend_models_live_outside_the_page()
     check_transport_is_the_only_way_out()
+    check_preferences_keep_the_old_key_working()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
         return 1
     print(
-        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / "
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / 偏好键兼容 / "
         "连接生命周期 / 收发 / 串口参数 / 公共传输实现与失败面）"
     )
     return 0
