@@ -1168,6 +1168,15 @@ def check_raw_terminal_view() -> None:
         "",
     )
     check(
+        "终端投影下「复制」复制的是屏幕可见文本（不是被遮住的行视图）",
+        "function terminalVisibleText()" in app_js
+        and 'if (id === "raw" && terminalOn()) {' in app_js
+        and 'host.querySelectorAll(".term-row")' in app_js
+        and "已复制终端" in app_js
+        and 'trimeEnds' not in app_js,
+        "",
+    )
+    check(
         "条件变更与当前命中都会重画终端，且计数归终端自己写",
         'if (id === "raw" && terminalOn()) renderTerminalNow();' in app_js
         and 'if (source.el.id === "lines-raw" && terminalOn()) renderTerminalNow();' in app_js

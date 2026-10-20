@@ -1791,9 +1791,34 @@ async function copyText(text) {
 }
 
 /* 复制的是**看得见的那些行**：过滤后的可见行，不含行号/时间戳/×N 这些界面标记，
- * 也不含被过滤掉或折叠掉的行（它们确实没显示出来）。 */
+ * 也不含被过滤掉或折叠掉的行（它们确实没显示出来）。
+ *
+ * ⚠️ 终端投影：那一窗此刻显示的是终端（行视图被它遮住），所以「复制」复制的是**终端里
+ * 看得见的那些行**（行尾空白去掉、末尾空行不带走）—— 与行流窗同一个口径：看得见什么就
+ * 复制什么，绝不悄悄复制被遮住的那一份。行号/时间戳是 CSS `::before`，不在 `textContent` 里。 */
+function terminalVisibleText() {
+  const host = $("term-raw");
+  if (!host) return "";
+  const rows = [...host.querySelectorAll(".term-row")]
+    .map((row) => (row.textContent || "").replace(/\s+$/, ""));
+  while (rows.length && rows[rows.length - 1] === "") rows.pop();
+  return rows.join("\n");
+}
+
 async function copyView(id) {
   const source = app.log.sources[id];
+  if (id === "raw" && terminalOn()) {
+    const text = terminalVisibleText();
+    if (!text) {
+      paneNotice(source, "终端里还没有内容可复制");
+      return;
+    }
+    const ok = await copyText(text);
+    paneNotice(source, ok
+      ? `已复制终端 ${text.split("\n").length} 行（屏幕上那一份）`
+      : "复制失败：浏览器拒绝了剪贴板访问");
+    return;
+  }
   // 卡片窗：复制的是**当前筛出来的**那几张阶段卡的文字（与行流窗口同一个口径：
   // 可见的才复制，被收起来的不算）。
   if (SOURCE_BY_ID[id].cards) {
