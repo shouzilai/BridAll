@@ -242,6 +242,8 @@
     <!-- 「详情」是浮层：默认 hidden，展开**不推动**这个面板的布局。 -->
     <div class="observe-note ident-detail" id="identDetail" role="note" hidden></div>
   </div>
+  <!-- 本次将执行：稳定摘要，始终占一行（只在内容变了才写 DOM，见 renderRunPreview）。 -->
+  <div class="run-preview" id="runPreview" role="status" aria-live="polite"></div>
   <div class="message" id="runMessage" hidden></div>
   <div class="message" id="observeMessage" hidden></div>
 </section>

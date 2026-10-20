@@ -29,7 +29,7 @@ const {
 const {
   SNIFF_IDENTITY_LABEL, EVIDENCE_REF_ORDER, startReadiness, sessionStateOf, sessionDurationMs,
   sessionDeviceText, recordedDeviceText, recordedDeviceBadge, mergeEvidenceRefs, liveDurationMs,
-  summarizeDomains, runDeviceLine,
+  summarizeDomains, runDeviceLine, runPreviewLine,
 } = globalThis.PWModelRuns;
 /* 身份那一块的纯文案：chip 短结论、详情整段、悬停全量、能力提示。 */
 const {
@@ -8757,9 +8757,37 @@ function updateButtons() {
   //  / D8：端口/身份就绪那一格要跟着“选中的卡片 / 撞不撞口”一起动。
   // 它由状态轮询、切模式、选卡片三处驱动 —— 放在 `updateButtons()` 末尾就只算一处。
   renderPortStatus();
+  // “本次将执行”的摘要与选择同源（只在页面上写文字，不触发动作）。
+  renderRunPreview();
 }
 
 /* ------------------------------------------------------------------ actions */
+/* 启动前先在**页面内**给出“本次将执行”的稳定摘要（不用原生确认框承担摘要）。
+ * 只转述当前选择与采集时长/复位勾选，不触发任何动作；完整文字在 title 里。 */
+function runPreviewText() {
+  const facts = selectedRunFacts();
+  if (!facts.firmware || !facts.suite) return "";
+  return runPreviewLine({
+    card: app.selectedCard,
+    firmwareLabel: facts.firmware.label,
+    suite: facts.suite,
+    seconds: Number($("observeSeconds")?.value || 0),
+    reset: Boolean($("resetPulse")?.checked),
+  });
+}
+
+function renderRunPreview() {
+  const box = $("runPreview");
+  if (!box) return;
+  const text = runPreviewText();
+  const line = text || "本次将执行：先选好固件与套件（这里只是摘要，不会触发任何动作）";
+  /* ⚠️ 只在内容真的变了才写 DOM：它带 `aria-live="polite"`，每 2 s 轮询都重写一遍
+   * 会让读屏器反复播报同一句话。 */
+  if (box.textContent !== line) box.textContent = line;
+  if (box.title !== text) box.title = text;
+  box.dataset.ready = text ? "1" : "0";
+}
+
 /* 这次 run 要动的设备，给人看的那一行（确认框与提示都用它）。
  * ⚠️ 没选卡片时**不说“未声明端口”**（那是把“没点名”说成了“设备没说”，会让人
  *    以为要去查设备声明）：而是明说这次按**本机登记**的端口走。
@@ -9878,6 +9906,8 @@ function boot() {
   for (const id of ["flashConfirm", "resetPulse"]) {
     if ($(id)) $(id).addEventListener("change", updateButtons);
   }
+  // 采集时长也是摘要的一部分：改数字就重算那一行（不触发任何动作）。
+  if ($("observeSeconds")) $("observeSeconds").addEventListener("input", renderRunPreview);
   if ($("runTarget")) $("runTarget").addEventListener("change", () => renderRunFirmwares());
   // 换固件：只换选中项（目标跟着它推导，套件跟着换）—— 不连接、不烧录。
   if ($("runFirmware")) $("runFirmware").addEventListener("change", () => {

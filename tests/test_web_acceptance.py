@@ -1342,6 +1342,41 @@ def check_preferences_keep_the_old_key_working() -> None:
     )
 
 
+def check_run_preview_summarizes_before_start() -> None:
+    """启动前在页面内给出「本次将执行」的稳定摘要：只写文字、不触发动作、也不靠原生确认框。"""
+    print("\n[15] 本次将执行：页面内摘要（与选择同源）")
+    static_dir = CONSOLE_DIR / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+    style_css = (static_dir / "style.css").read_text(encoding="utf-8")
+    runs_js = (static_dir / "js" / "model" / "runs.js").read_text(encoding="utf-8")
+    check(
+        "页面有一行摘要（可访问地声明它是状态）",
+        'id="runPreview"' in index_html
+        and 'role="status"' in index_html and 'aria-live="polite"' in index_html
+        and 'class="run-preview"' in index_html,
+        "",
+    )
+    check(
+        "文字在纯模型里，页面只递当前选择",
+        "function runPreviewLine(input)" in runs_js and "function runPreviewText()" in app_js,
+        "",
+    )
+    check(
+        "只在内容变了才写 DOM（不逐轮询播报）",
+        "if (box.textContent !== line) box.textContent = line;" in app_js,
+        "",
+    )
+    check(
+        "跟着选择与采集时长更新，且不触发动作",
+        "renderRunPreview();" in app_js
+        and '$("observeSeconds").addEventListener("input", renderRunPreview);' in app_js
+        and "本次将执行：先选好固件与套件" in app_js,
+        "",
+    )
+    check("样式定了高度与省略号（不推动下面布局）", ".run-preview {\n" in style_css and "text-overflow: ellipsis;" in style_css, "")
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1358,12 +1393,13 @@ def main() -> int:
     check_frontend_models_live_outside_the_page()
     check_transport_is_the_only_way_out()
     check_preferences_keep_the_old_key_working()
+    check_run_preview_summarizes_before_start()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
         return 1
     print(
-        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / 偏好键兼容 / "
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / 偏好键兼容 / 运行前摘要 / "
         "连接生命周期 / 收发 / 串口参数 / 公共传输实现与失败面）"
     )
     return 0

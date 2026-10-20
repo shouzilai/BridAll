@@ -1131,6 +1131,22 @@ button.danger:hover:not(:disabled) { border-color: #a34b4b; color: #ffd0d0; }
   background: #202834;
   border: 1px solid var(--line);
 }
+/* 本次将执行：稳定摘要。**始终占一行**（NOWRAP + 定高），内容长短只影响省略号，
+   不动下面步骤卡与工作台的垂直位置。 */
+.run-preview {
+  margin: 8px 10px 0;
+  padding: 5px 8px;
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  background: var(--log-surface-3);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.run-preview[data-ready="1"] { color: var(--text); }
 .message[data-kind="fail"] { border-color: var(--fail-border); background: #2a1b1c; }
 .message[data-kind="pass"] { border-color: var(--ok-border); background: #16281f; }
 .message[data-kind="warn"] { border-color: var(--warn-border); background: #2a2415; color: #f0d68a; }

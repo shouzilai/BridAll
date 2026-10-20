@@ -142,6 +142,23 @@
   /* 这次 run 要动的设备，给人看的那一行（确认框与提示都用它）。
    * ⚠️ 没选卡片时**不说“未声明端口”**（那是把“没点名”说成了“设备没说”，会让人
    *    以为要去查设备声明）：而是明说这次按**本机登记**的端口走。 */
+  /* 启动前那条「本次将执行」的稳定摘要（只说选择与参数，不触发任何动作）。
+   * 没选好固件/套件时返回空串：宁可空着，也不编一句看起来像结论的话。 */
+  function runPreviewLine(input) {
+    const spec = input || {};
+    if (!spec.firmwareLabel || !spec.suite) return "";
+    const card = spec.card || null;
+    const device = card ? `设备 #${card.num} ${card.port}` : "设备 本机登记端口";
+    const parts = [
+      device,
+      `固件 ${spec.firmwareLabel}`,
+      `套件 ${spec.suite}`,
+      Number(spec.seconds) ? `采集 ${Number(spec.seconds)} s` : "",
+      spec.reset ? "会复位设备" : "不复位",
+    ].filter(Boolean);
+    return `本次将执行：${parts.join(" · ")}`;
+  }
+
   function runDeviceLine() {
     const card = app.selectedCard;
     if (card) {
@@ -222,6 +239,7 @@
     recordedDeviceText,
     recordedDeviceBadge,
     runDeviceLine,
+    runPreviewLine,
     EVIDENCE_REF_ORDER, mergeEvidenceRefs, liveDurationMs,
     summarizeDomains,
   });
