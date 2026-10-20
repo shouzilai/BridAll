@@ -8793,6 +8793,34 @@ function renderRunPreview() {
  *    以为要去查设备声明）：而是明说这次按**本机登记**的端口走。
  * ⚠️ 用户口径 2026-10-13：屏幕上不出现“目标声明”这类内部词。 */
 
+/* 风险确认用**页面内**的聚焦确认层（不再弹原生 `confirm`）：
+ * 只写设备、固件、危险动作与后果；Esc / 「取消」⇒ 什么都没发生；
+ * 默认焦点落在「取消」（危险动作不靠回车误触）。浏览器不支持 <dialog> 时退回原生确认框。 */
+function confirmRisk(lines) {
+  const dialog = $("riskDialog");
+  const body = $("riskBody");
+  const rows = lines.filter(Boolean);
+  if (!dialog || !body || typeof dialog.showModal !== "function") {
+    return Promise.resolve(window.confirm(rows.join("\n")));
+  }
+  body.textContent = "";
+  for (const line of rows) {
+    const p = document.createElement("p");
+    p.textContent = line;
+    body.appendChild(p);
+  }
+  dialog.returnValue = "";
+  return new Promise((resolve) => {
+    const onClose = () => {
+      dialog.removeEventListener("close", onClose);
+      resolve(dialog.returnValue === "ok");
+    };
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+    ($("riskCancel") || dialog).focus();
+  });
+}
+
 async function startRun() {
   const selection = selectedRunFacts();
   if (!selection.target || !selection.firmware || !selection.suite) {
@@ -8822,39 +8850,29 @@ async function startRun() {
     // 否则用户看到的就是“点了没反应”。
     refuseStart("所选固件会覆盖设备 Flash：请先勾选“我确认覆盖设备 Flash”", "flashConfirmField");
     return;
-  }  const optionLines = (selection.project?.run_options || []).map((option) =>
-    `${option.label}：${projectOptions[option.key] ? "是" : "否"}`
-  );
-  // 身份靠什么确定由**项目包**声明（`run_defaults.probe_command`）：没有它就抓不到明文
-  // 身份横幅，decode 只能如实拒绝选字典。页面只把它**照抄出来**，不自己编一条命令。
-  const probe = selection.project?.run_defaults?.probe_command || "";
-  const declaredLines = [
-    probe ? `身份探测：${probe}（向设备要一次明文身份，否则无法选字典）` : "",
-  ].filter(Boolean);
-  const confirmed = window.confirm(
-    "将按顺序执行：precheck → build → upload → observe → decode → assert\n\n" +
-      `目标：${selection.target.label}\n` +
-      //  / D5：说清这一次要动**哪一个设备** —— 选了卡片就报卡片（口是它给的），
-      // 没选就如实说"没点名"（那时候口来自目标自己的声明）。
-      `${runDeviceLine()}\n` +
-      `固件：${selection.firmware.label}\n` +
-      `项目包：${selection.firmware.project || "（未声明）"}\n` +
-      `套件：${selection.suite}\n` +
-      `采集窗口：${seconds} s\n` +
-      `显式复位：${reset ? "是" : "否"}`
-      + (selection.target.reset?.default_request === undefined
-        ? "\n"
-        : `（这个目标默认${selection.target.reset.default_request ? "复位" : "不复位"}）\n`) +
-      (declaredLines.length ? `${declaredLines.join("\n")}\n` : "") +
-      (selection.firmware.requires_flash_confirmation ? "覆盖 Flash：已逐次确认\n" : "") +
-      (optionLines.length ? `${optionLines.join("\n")}\n` : "") +
-      "该流程可能执行构建、烧录与设备复位。确认开始？"
-  );
-  // ：浏览器把 `confirm()` 吞掉时（比如用户在浏览器里勾了“不再弹窗”）
-  // 以前是 `return` 一句不说 —— 那也是“点了没反应”的一种。拒绝也要出声。
-  if (!confirmed) {
-    showMessage("已取消启动（没有在确认框里点“确定”）", "warn");
-    return;
+  }
+  /* 普通 run **不再**弹确认框 —— “本次将执行”已经在页面上稳定摘要（`#runPreview`）。
+   * 只有涉及覆盖 Flash / 复位（危险动作）时才确认；确认内容只说设备、固件、危险动作与
+   * 后果，不列项目包、探针命令、套件参数这些实现细节。 */
+  const dangers = [];
+  if (selection.firmware.requires_flash_confirmation) dangers.push("覆盖设备 Flash");
+  if (reset) dangers.push("显式复位设备");
+  if (dangers.length) {
+    const consequence = [
+      reset ? "设备会被复位" : "",
+      selection.firmware.requires_flash_confirmation ? "设备原有 Flash 内容会被覆盖" : "",
+    ].filter(Boolean).join("；");
+    const confirmed = await confirmRisk([
+      runDeviceLine(),
+      `固件：${selection.firmware.label}`,
+      `危险动作：${dangers.join("、")}`,
+      consequence ? `后果：${consequence}` : "",
+    ]);
+    // 取消也要出声：一句不说，在用户看来就是“点了没反应”。
+    if (!confirmed) {
+      showMessage("已取消启动（没有在确认框里点“确定”）", "warn");
+      return;
+    }
   }
   try {
     const result = await postJson("/api/run", {

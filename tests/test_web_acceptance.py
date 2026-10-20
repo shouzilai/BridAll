@@ -1377,6 +1377,43 @@ def check_run_preview_summarizes_before_start() -> None:
     check("样式定了高度与省略号（不推动下面布局）", ".run-preview {\n" in style_css and "text-overflow: ellipsis;" in style_css, "")
 
 
+def check_dangerous_actions_confirm_in_page() -> None:
+    """危险动作在**页面内**确认：设备 / 固件 / 危险动作 / 后果四类事实，默认焦点在「取消」。"""
+    print("\n[16] 危险动作：页面内确认层（不再用原生 confirm）")
+    static_dir = CONSOLE_DIR / "static"
+    app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+    index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+    style_css = (static_dir / "style.css").read_text(encoding="utf-8")
+    check(
+        "页面里有确认层（dialog + 取消/确认按钮）",
+        'id="riskDialog"' in index_html and 'id="riskBody"' in index_html
+        and 'id="riskCancel"' in index_html and 'id="riskOk"' in index_html
+        and 'aria-labelledby="riskTitle"' in index_html,
+        "",
+    )
+    check(
+        "确认走页面内对话框，原生 confirm 只剩兼容兜底",
+        "function confirmRisk(lines)" in app_js
+        and app_js.count("window.confirm(") == 1
+        and "typeof dialog.showModal" in app_js,
+        "window.confirm 次数=%d" % app_js.count("window.confirm("),
+    )
+    check(
+        "确认只说四类事实，不列项目包/探针命令",
+        'dangers.push("覆盖设备 Flash")' in app_js
+        and 'dangers.push("显式复位设备")' in app_js
+        and "危险动作：" in app_js and "后果：" in app_js
+        and "项目包：" not in app_js.split("async function startRun()", 1)[1].split("try {", 1)[0],
+        "",
+    )
+    check(
+        "默认焦点落在「取消」",
+        '($("riskCancel") || dialog).focus();' in app_js
+        and ".risk-dialog {" in style_css and ".risk-dialog::backdrop" in style_css,
+        "",
+    )
+
+
 def main() -> int:
     print("Web 验收（无硬件、无 pyserial）")
     check_demo_pages()
@@ -1394,12 +1431,13 @@ def main() -> int:
     check_transport_is_the_only_way_out()
     check_preferences_keep_the_old_key_working()
     check_run_preview_summarizes_before_start()
+    check_dangerous_actions_confirm_in_page()
     print()
     if FAILURES:
         print(f"RESULT: {len(FAILURES)} 条失败 —— " + "；".join(FAILURES))
         return 1
     print(
-        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / 偏好键兼容 / 运行前摘要 / "
+        "RESULT: 全部通过（页面 / 三模式 / 历史回放 / 枚举与配置合并 / 嗅探 / 嗅探进度与并发闸门 / 前端纯模型 / 传输层唯一出口 / 偏好键兼容 / 运行前摘要 / 危险动作确认 / "
         "连接生命周期 / 收发 / 串口参数 / 公共传输实现与失败面）"
     )
     return 0

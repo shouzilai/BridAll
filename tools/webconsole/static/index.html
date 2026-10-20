@@ -655,6 +655,18 @@
 </section>
 
 <footer class="footer" id="footer"></footer>
+<!-- 风险确认的**页面内确认层**（不再用原生 confirm）。
+     只写设备、固件、危险动作与后果；Esc / 「取消」等于什么都没发生。 -->
+<dialog id="riskDialog" class="risk-dialog" aria-labelledby="riskTitle">
+  <form method="dialog">
+    <h2 id="riskTitle">这次会动到设备</h2>
+    <div class="risk-body" id="riskBody"></div>
+    <div class="risk-actions">
+      <button type="submit" value="cancel" id="riskCancel">取消</button>
+      <button type="submit" value="ok" id="riskOk" class="danger">确认开始</button>
+    </div>
+  </form>
+</dialog>
 <!-- 纯模型：按依赖顺序在 app.js 之前装载（顺序是唯一出处，模型之间不互相等待）。 -->
 <script src="/static/js/model/sources.js"></script>
 <script src="/static/js/model/format.js"></script>

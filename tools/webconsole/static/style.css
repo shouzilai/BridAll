@@ -2029,6 +2029,22 @@ td a:hover { text-decoration: underline; }
   }
 }
 
+/* 风险确认层（页面内，不用原生 confirm）。默认焦点在「取消」：危险动作不靠回车误触。 */
+.risk-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 18px 48px var(--panel-shadow);
+}
+.risk-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+.risk-dialog h2 { margin: 0 0 10px; font-size: 15px; }
+.risk-body p { margin: 0 0 5px; font-size: 13px; line-height: 1.5; }
+.risk-body p:empty { display: none; }
+.risk-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
 .footer {
   padding: 8px 14px 20px;
   font-size: 11px;
