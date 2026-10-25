@@ -58,7 +58,7 @@ const {
 } = globalThis.PWModelSay;
 /* 行模型：文本 → 展示行、追加/裁剪、行号基准、视图推进（不碰 DOM）。 */
 const {
-  MAX_LINES, stripAnsi, visibleControls, toLines, isWatched, appendLineText, appendLineTime, appendMany,
+  MAX_LINES, stripAnsi, visibleControls, visibleLineText, toLines, isWatched, appendLineText, appendLineTime, appendMany,
   appendText, setSourceLines, setSourceText, flushPlan, markRendered, trimSource, acceptItem,
   advanceView, resetView, streamLineFrame, streamGapIssue, applyStreamFrame, paneFrameIssue,
 } = globalThis.PWModelLogSource;
@@ -951,6 +951,7 @@ function continueLine(store, id, text, ts, { lineNo = null } = {}) {
   return 0;
 }
 
+
 /* --------------------------------------------- 派生视图：搜索、过滤、折叠 */
 /* 这一层的铁律：**只读模型**。搜索、过滤、折叠、高亮都只是“怎么显示”，
  * 不会改写 source.lines，更不会碰 runs/ 里的证据文件；源行号也不随过滤变化。
@@ -1085,20 +1086,32 @@ function buildRunSources(detail, rawText) {
 }
 
 /* --------------------------------------------------------- 工作台 DOM 层 */
-/* 命中高亮用 mark 包住命中的片段：只改样式，不改文字，所以复制出来还是原始行。 */
+/* 命中高亮用 mark 包住命中的片段：只改样式，不改文字。
+ * ⚠️ `text` 必须是**要显示的那份文字**（已过 `visibleLineText`）：`ranges` 是它的下标。
+ *    带控制字符的行换不出对应下标，调用方就不高亮 —— 点位不准的高亮比没有高亮更坑。 */
 function highlighted(text, ranges) {
   const fragment = document.createDocumentFragment();
   let cursor = 0;
   for (const [start, end] of ranges) {
-    if (start > cursor) fragment.appendChild(document.createTextNode(visibleControls(text.slice(cursor, start))));
+    if (start > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, start)));
     const mark = document.createElement("mark");
     mark.className = "hit";
-    mark.textContent = visibleControls(text.slice(start, end));
+    mark.textContent = text.slice(start, end);
     fragment.appendChild(mark);
     cursor = end;
   }
-  if (cursor < text.length) fragment.appendChild(document.createTextNode(visibleControls(text.slice(cursor))));
+  if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
   return fragment;
+}
+
+/* 一行正文：先算出“这一行画出来是什么样”（终端语义），再决定能不能上高亮。
+ * 控制字符被消化掉之后，原来那份下标（`ranges`）就对不上了 ⇒ 这一行不高亮，
+ * 但**命中依旧存在**（计数、上/下一条、结果清单都还按它算）。 */
+function appendLineBody(node, text, ranges) {
+  const shown = visibleLineText(text);
+  if (ranges && ranges.length && shown === text) node.appendChild(highlighted(text, ranges));
+  else node.textContent = shown;
+  return shown;
 }
 
 /* 时间列的内容（纯函数，宿主回归直接核对它）：
@@ -1129,10 +1142,11 @@ function buildLineNode(source, item) {
   const time = lineTimeLabel(source, absolute, item.text);
   if (time) node.dataset.time = `${time} `;
   if (item.repeats > 1) node.dataset.repeat = String(item.repeats);
-  if (item.ranges.length) node.appendChild(highlighted(item.text, item.ranges));
-  // ⚠️ 控制字符（设备回显的退格 `\x08` 之类）浏览器没有字形，直接塞进文本节点会被画成
-  //    □ 方框 —— 用户看到的“乱码”就是它。照实写成 `\xNN`：模型与证据一个字都不改。
-  else node.textContent = visibleControls(item.text);
+  if (item.ranges.length) appendLineBody(node, item.text, item.ranges);
+  // ⚠️ 行正文按**终端语义**画（退格真的删字、回车回到行首）：设备回显的 `\x08 \x08`
+  //    照字节摆出来就是“奇怪字符”，而用户要的是“敲 trial 按一次退格就显 tria”。
+  //    模型与证据一个字都没改，字节仍然在 raw.bin 里。
+  else appendLineBody(node, item.text, null);
   return node;
 }
 
@@ -8306,6 +8320,7 @@ function applyEvent(event, touched) {
       //    ⇒ 它按**行号**定位永远不成立（契约：拒绝，不拿一个差不多的行号跳过去）。
       //    但这一行的**身份**是服务端那条 io 事件 ⇒ 带上它的事件号（）：
       //    阶段卡上的 `{ source: "tool", event_seq: N }` 就是按它落到这一行的。
+      // ⚠️ 终端直输是**一次一个键**，这里**不合并**：一条 TX 一行（行身份就是那条 io 事件）。
       add("tool", feed(store, "tool", event.line, event.ts, { defer, event_seq: event.event_seq }));
       break;
     case "raw":
@@ -9021,8 +9036,30 @@ function setTerminalView(on, { remember = false } = {}) {
     app.prefs.terminalChoice = on ? "on" : "off";
     savePrefs();
   }
-  if (on) renderTerminalNow();
+  if (on) {
+    backfillTerminalRows();
+    renderTerminalNow();
+  }
   renderRawResults();
+}
+
+/* 刚切到终端视图时，把**这一窗已经收到的行**补进终端模型。
+ *
+ * ⚠️ 不补就是一片空白：终端只吃实时字节块（`term/rx`），切过来之前那一段它没见过 ——
+ *    用户刚敲完命令再点「终端」，屏上却什么都没有，那比行视图还难用。
+ *    补的素材就是行视图里那几行（与 raw.bin 同一份字节），按终端语义重放一遍。
+ * ⚠️ 只在终端还空着时补（已经跟着实时字节跑过的不动，否则同一段会被画两遍）。
+ */
+function backfillTerminalRows() {
+  const state = termState();
+  if (!state) return 0;
+  if (state.row > 0 || state.rows.some((chars) => chars.length)) return 0;
+  const source = app.log && app.log.sources ? app.log.sources.raw : null;
+  const lines = source ? source.lines : [];
+  if (!lines.length) return 0;
+  termApplyBytesInto(state, new TextEncoder().encode(`${lines.join("\n")}\n`));
+  renderTerminalNow();
+  return lines.length;
 }
 
 /* 原始窗口默认显示哪种视图（需求 §4.2）：
@@ -9221,8 +9258,7 @@ function renderRawResults() {
     }
     const body = document.createElement("span");
     body.className = "result-text";
-    if (row.ranges.length) body.appendChild(highlighted(row.text, row.ranges));
-    else body.textContent = visibleControls(row.text);
+    appendLineBody(body, row.text, row.ranges);
     item.appendChild(body);
     const where = document.createElement("span");
     where.className = "result-where";

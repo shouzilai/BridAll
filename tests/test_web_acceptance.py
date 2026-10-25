@@ -1262,6 +1262,22 @@ def check_raw_terminal_view() -> None:
         and 'if (button) button.setAttribute("aria-pressed", on ? "true" : "false");' in app_js,
         "",
     )
+    observe_py = (CONSOLE_DIR / "observe.py").read_text(encoding="utf-8")
+    check(
+        "切到终端视图时把这一窗已有的行补进去（不补就是一片空白）",
+        "function backfillTerminalRows()" in app_js
+        and "backfillTerminalRows();" in app_js
+        and 'const lines = source ? source.lines : [];' in app_js,
+        "",
+    )
+    check(
+        "工具窗保持一条 TX 一行（不合并、不改行身份）",
+        "mergeTerminalKeyLine" not in app_js
+        and "TOOL_KEY_MERGE_MS" not in app_js
+        and "tx_source" not in observe_py
+        and 'add("tool", feed(store, "tool", event.line, event.ts, { defer, event_seq: event.event_seq }));' in app_js,
+        "",
+    )
 
 
 def check_frontend_models_live_outside_the_page() -> None:
@@ -1300,12 +1316,14 @@ def check_frontend_models_live_outside_the_page() -> None:
     )
     log_source_js = (model_dir / "log-source.js").read_text(encoding="utf-8")
     check(
-        "行视图把控制字符写成可见转义（浏览器没有这些字形，会画成方框）",
-        "function visibleControls(" in log_source_js
-        and "visibleControls," in log_source_js
-        and app_js.count("visibleControls(") >= 3
-        and "node.textContent = item.text" not in app_js
-        and "body.textContent = row.text" not in app_js,
+        "行正文按终端语义画（退格真的删字，不把控制字节摆出来）",
+        "function visibleLineText(text)" in log_source_js
+        and "visibleLineText," in log_source_js
+        and "function appendLineBody(node, text, ranges)" in app_js
+        and "appendLineBody(node, item.text, item.ranges)" in app_js
+        and "appendLineBody(node, item.text, null)" in app_js
+        and "appendLineBody(body, row.text, row.ranges)" in app_js
+        and "node.textContent = visibleControls(item.text)" not in app_js,
         "",
     )
     check(

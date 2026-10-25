@@ -20,19 +20,46 @@
 
   const stripAnsi = (text) => String(text ?? "").replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
-  /* 控制字符 → 可见转义（`\x08` 这种写法）。
-   *
-   * ⚠️ 为什么非做不可：设备回显退格时发的是 `\x08 \x08`（退格、空格、退格），
-   *    这些字节落在行文本里，浏览器**没有它们的字形** ⇒ 画成一串 □ 方框，
-   *    用户看到的就是“乱码”（真机实测：`msh >fdjsldjfld □□ □□ □`）。
-   *    写成 `\xNN` 至少是“看得懂的事实”：字节到底是什么、在哪一位，一眼能数出来。
-   *
-   * 只管**显示**：模型里的字符串、raw.bin、下载与证据一个字都不改；
-   * TAB（0x09）保留 —— 它本来就有字形。
-   */
+  /* 控制字符 → 可见转义（`\x08` 这种写法）。还留着它是为了"这一窗里确实有控制字符"
+   * 这种诊断场景；**行正文不靠它显示** —— 见下面的 `visibleLineText`。 */
   function visibleControls(text) {
     return String(text ?? "").replace(/[\u0000-\u0008\u000a-\u001f\u007f]/g, (ch) =>
       "\\x" + ch.charCodeAt(0).toString(16).padStart(2, "0"));
+  }
+
+  /* 一行文本的**可见内容**：把这一行按终端语义“画”一遍。
+   *
+   * 为什么要有它（用户口径）：设备回显退格发的是 `\x08 \x08`（退格、空格、退格）。
+   * 直接把这些字节摆出来，屏上就是 `msh >trial\x08 \x08` —— 用户看到的是“奇怪字符”，
+   * 而他要的是“我敲 trial，按一次退格就是 tria，再按一次就是 tri”。所以这一行要像终端那样
+   * 带一个**光标**重放：
+   *   · 普通字符：写在光标处（**覆盖**，不是插入），光标右移；
+   *   · 退格（0x08 / 0x7F）：光标左移一格（擦不擦由后面那个空格决定，与真终端一致）；
+   *   · 回车（0x0D）：光标回到行首（后面的字覆盖前面）；
+   *   · 其它控制字符（响铃、换页……）：不画 —— 终端本来也不为它们画字形。
+   *
+   * ⚠️ 只管**显示**：模型里的字符串、`raw.bin`、下载与证据一个字都不改。
+   * ⚠️ 光标之后的内容不显示：那是被退格擦掉/被回车盖住的区域（终端上那里是空格）。
+   */
+  function visibleLineText(text) {
+    const chars = [];
+    let cursor = 0;
+    for (const ch of String(text ?? "")) {
+      const code = ch.charCodeAt(0);
+      if (ch === "\r") {
+        cursor = 0;
+        continue;
+      }
+      if (code === 0x08 || code === 0x7f) {
+        if (cursor > 0) cursor -= 1;
+        continue;
+      }
+      if (code < 0x20 && code !== 0x09) continue;
+      while (chars.length < cursor) chars.push(" ");
+      chars[cursor] = ch;
+      cursor += 1;
+    }
+    return chars.slice(0, cursor).join("");
   }
 
   /* 文本 → 展示行。末尾的换行是行终止符，不是“一行空内容”。
@@ -299,6 +326,7 @@
     MAX_LINES,
     stripAnsi,
     visibleControls,
+    visibleLineText,
     toLines,
     isWatched,
     appendLineText,
