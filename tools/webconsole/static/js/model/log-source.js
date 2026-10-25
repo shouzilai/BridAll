@@ -20,11 +20,34 @@
 
   const stripAnsi = (text) => String(text ?? "").replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
-  /* 文本 → 展示行。末尾的换行是行终止符，不是“一行空内容”。 */
+  /* 控制字符 → 可见转义（`\x08` 这种写法）。
+   *
+   * ⚠️ 为什么非做不可：设备回显退格时发的是 `\x08 \x08`（退格、空格、退格），
+   *    这些字节落在行文本里，浏览器**没有它们的字形** ⇒ 画成一串 □ 方框，
+   *    用户看到的就是“乱码”（真机实测：`msh >fdjsldjfld □□ □□ □`）。
+   *    写成 `\xNN` 至少是“看得懂的事实”：字节到底是什么、在哪一位，一眼能数出来。
+   *
+   * 只管**显示**：模型里的字符串、raw.bin、下载与证据一个字都不改；
+   * TAB（0x09）保留 —— 它本来就有字形。
+   */
+  function visibleControls(text) {
+    return String(text ?? "").replace(/[\u0000-\u0008\u000a-\u001f\u007f]/g, (ch) =>
+      "\\x" + ch.charCodeAt(0).toString(16).padStart(2, "0"));
+  }
+
+  /* 文本 → 展示行。末尾的换行是行终止符，不是“一行空内容”。
+   *
+   * ⚠️ **只按 `\n` 断行**，行尾的 `\r` 当终止符吃掉，行**中间**的 `\r` 留在原地
+   *    （显示层会把它写成 `\x0d`）。以前写成 `replace(/\r\n?/g, "\n")`，等于把行内的
+   *    一个 `\r` 也当成换行 —— 于是一条实时行事件可能变成**两行显示行**，而“行号 ↔
+   *    显示行”是一对一的：多出来的那一行会让后面的续行判定全对不上，页面就判“行号有缺口”，
+   *    再把每一截半行另起一行（真机实测：敲字符串 + 退格，行视图里一字符一行、并挂上
+   *    “行号不可信”）。一条行事件就该只长一行。
+   */
   function toLines(text) {
     const clean = stripAnsi(text);
     if (!clean) return [];
-    const lines = clean.replace(/\r\n?/g, "\n").split("\n");
+    const lines = clean.split("\n").map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
     if (lines[lines.length - 1] === "") lines.pop();
     return lines;
   }
@@ -275,6 +298,7 @@
   global.PWModelLogSource = Object.freeze({
     MAX_LINES,
     stripAnsi,
+    visibleControls,
     toLines,
     isWatched,
     appendLineText,

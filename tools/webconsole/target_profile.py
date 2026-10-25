@@ -165,6 +165,10 @@ class TransportSpec:
     # 项目/设备配置（不是平台策略）：命令框与终端直输的行约定与退格字节。
     line_ending: str = "crlf"
     terminal_backspace: str = "del"
+    #: 终端直输的**回车**用哪个结束符（空 = 沿用 `line_ending`）：
+    #: `line_ending` 是设备协议的断行，它是“人按的那个键”—— 混用会让把
+    #: `\r`/`\n` 各自当成一次回车的 shell 一条命令跑两次。
+    terminal_enter_ending: str = ""
     terminal_local_echo: bool = False
     #: 这条串口是一个控制台终端（由目标/项目声明）。只影响**页面默认显示哪种视图**，
     #: 不改字节流，也不改证据；用户仍可以手动切。
@@ -257,6 +261,7 @@ class TargetProfile:
                 "read_only": self.transport.read_only,
                 "line_ending": self.transport.line_ending,
                 "terminal_backspace": self.transport.terminal_backspace,
+                "terminal_enter_ending": self.transport.terminal_enter_ending,
                 "terminal_local_echo": self.transport.terminal_local_echo,
             },
             "reset": {

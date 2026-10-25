@@ -71,6 +71,13 @@ class DeviceSpec:
     # 终端直输的退格键发哪个字节（需求 §4.2 要能发退格）：
     #   `del` = 0x7F（现代终端），`bs` = 0x08（嵌入式 console 常见）。
     terminal_backspace: str = "del"
+    # 终端直输的**回车**发哪个行结束符（空 = 沿用 `line_ending`）。
+    # ⚠️ 它必须能与 `line_ending` 分开声明：`line_ending` 是**设备协议**的断行约定
+    #    （有的固件只按 `\n` 断行，所以命令框发 `\r\n` 才稳），而终端里的回车是**人按的那个键**
+    #    —— 任何 shell 都认 `\r`，却有的 shell 把 `\r` 和 `\n` **各自**当成一次回车
+    #    （RT-Thread msh 实测）：给它发 `\r\n` 就是一条命令跑两次，屏上连出两行提示符。
+    #    两者混用一个值，就只能二选一错一头。
+    terminal_enter_ending: str = ""
     # 这条串口**就是一个控制台终端**（设备/项目自己声明）：会话快照里的
     # `terminal.projection` 由它派生。默认 false —— 平台不把“串口”猜成“终端”。
     terminal_console: bool = False

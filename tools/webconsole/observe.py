@@ -219,6 +219,10 @@ OBSERVE_PORT_MISSING = "port_missing"
 OBSERVE_OWNED_ELSEWHERE = "owned_elsewhere"
 OBSERVE_OPEN_FAILED = "open_failed"
 
+# 「通用串口」在设备登记里的 `role`：系统枚举到、台架没点名的口（需求 §6.11/§6.12）。
+# 它与任何项目包都不绑定 —— 项目包声明的身份查询文本对它**不适用**。
+GENERIC_ROLE = "generic"
+
 # 「设备无身份响应」是**连接之后**的一个身份状态（切片 5），
 # 不是连接状态机里的一格：连接成功但设备不回 `@PWINFO`，串口本身仍然是好的。
 IDENTITY_UNKNOWN = "unknown"
@@ -412,6 +416,20 @@ def _duration_text(stamp: str | None) -> str:
     if seconds < 60:
         return f"（已连接 {seconds} s）"
     return f"（已连接 {seconds // 60} 分 {seconds % 60} 秒）"
+
+
+def terminal_enter_ending(target: Any) -> str:
+    """终端里那个**回车键**发哪个行结束符：设备声明 > `line_ending`。
+
+    ⚠️ 两者不是一回事：`line_ending` 是**设备协议**的断行约定（有的固件只按 `\\n` 断行），
+    而终端里的回车是"人按的那个键"。混用一个值只能二错一头 —— 把 `\\r` 与 `\\n`
+    **各自**当成一次回车的 shell（RT-Thread msh 真机实测）收到 `\\r\\n`，一条命令会跑两次，
+    屏上连出两行提示符。所以这里优先读独立声明 `terminal_enter_ending`。
+    """
+    declared = str(getattr(target, "terminal_enter_ending", "") or "").strip()
+    if declared:
+        return declared
+    return str(getattr(target, "line_ending", "") or "")
 
 
 class ObserveSession:
@@ -1043,7 +1061,10 @@ class ObserveSession:
         try:
             payload, display, labels = build_keys_payload(
                 keys,
-                line_ending=getattr(target, "line_ending", None),
+                # ⚠️ 终端里的回车用**自己那条声明**（`terminal_enter_ending`），不拿设备协议的
+                #    `line_ending` 顶上：把 `\r`/`\n` 各自当成一次回车的 shell（RT-Thread msh 实测）
+                #    收到 `\r\n` 会一条命令跑两次 —— 真机上就是“按一次回车，屏上两行提示符”。
+                line_ending=terminal_enter_ending(target),
                 # 退格键：本次调用指定 > 设备声明 > 默认。嵌入式 shell 有的只认 0x08（`\b`），
                 # 有的只认 0x7F（DEL）；发错的那个既不删字符、还会回显一个方块。
                 backspace=backspace if backspace is not None else getattr(target, "terminal_backspace", None),
@@ -1240,6 +1261,13 @@ class ObserveSession:
         self._stop_identity_queries()
         if not self.auto_identity or not self.capabilities().get("identity", False):
             return
+        # 通用串口（系统枚举到、台架没点名的口）**不自动问**：它没绑定任何项目，
+        # 查询文本却是当前这一路项目包声明的（参考项目是 `@PWINFO`）—— 对一个不认识
+        # 这条命令的 shell 问出去，只会换来一句 `command not found` 混进用户的会话。
+        # 要问身份随时可以点「查身份」，那条路不受影响。
+        spec = self._device or self._target
+        if str(getattr(spec, "role", "") or "") == GENERIC_ROLE:
+            return
         # 零配置接入没有声明查询文本：不自动问（问不出身份，回显还会污染用户的会话）。
         if not self.identity_declared:
             return
@@ -1268,13 +1296,17 @@ class ObserveSession:
     def _identity_query_loop(self, stop: threading.Event) -> None:
         # ⚠️ 连接后自动问身份的前提是“用户还没开口”：问出去的查询，设备的回显会拼进
         #    用户的第一条命令（真机实测 `msh >abc@PWINFO`，光标被顶到下一行、退格看不见）。
-        #    所以：（1）至少等 2 s，给用户先动手的机会；（2）他已经发过字节就不问了 ——
-        #    要查身份随时可以点「查身份」，那条路不受影响。
-        delay = max(2.0, float(self.identity_query_delay_s or 0.0))
-        if stop.wait(delay):
+        #    **正确做法是尽早问完**（连接后立刻，赶在用户动手之前），而不是等一会儿再问 ——
+        #    等 2 s 恰好是用户开始打字的时候，回显就正好落在他的行中间。
+        #    另外每问一次之前都再看一眼“用户有没有发过东西”，发过就彻底放弃（他已经在
+        #    用这条线了）；要查身份随时可以点「查身份」，那条路不受影响。
+        #    延迟只认项目声明的 `identity_query_delay_s`（设备启动初始化期间吃命令时才需要等）。
+        delay = max(0.0, float(self.identity_query_delay_s or 0.0))
+        if delay and stop.wait(delay):
             return
         with self._lock:
-            if self._tx_messages > 0:
+            baseline = self._tx_messages   # 自动查询自己发的也算 tx，别把自己挡在外面
+            if baseline > 0:
                 return
         for attempt in range(1, IDENTITY_MAX_ATTEMPTS + 1):
             if stop.is_set():
@@ -1283,6 +1315,8 @@ class ObserveSession:
                 if self._state != OBSERVE_CONNECTED or self._identity in {
                     IDENTITY_OK, IDENTITY_UNSUPPORTED
                 }:
+                    return
+                if self._tx_messages > baseline:   # 用户插话了：别再往他那一行里塞字
                     return
             with self._op_lock:
                 if stop.is_set():
@@ -1837,7 +1871,12 @@ class ObserveSession:
             except Exception:
                 pending = 0
         try:
-            self._emit_raw_line(tail, continuation=shown > 0, line_no=pending)
+            # ⚠️ 行号只在**这一行的第一截**（`shown == 0`）带：那一截是“基准” —— 页面靠它
+            #    知道这一窗从第几行开始。后续的续写只是一个尾巴，页面只能把它接到**最后一行**；
+            #    再带一次行号只会给两边一个对不上的机会（对不上时页面会边删边猜、一截一行）。
+            self._emit_raw_line(
+                tail, continuation=shown > 0, line_no=(pending if shown == 0 else 0)
+            )
         except Exception:  # 广播失败不能影响采集
             pass
 
@@ -1862,10 +1901,16 @@ class ObserveSession:
         # 就永远慢一拍。`chunk.hex()` 是**无空格**的十六进制 —— 页面按两字符切一个字节；
         # 用页面上那种空格分隔的写法喂进去会把字节切碎（真机实测字符缺失）。
         try:
+            # 这一块字节属于**正在拼的那一行** ⇒ raw.bin 的第 `raw_lines + 1` 行
+            # （与 `_flush_idle_tail` 里那个 `pending` 同一套口径）。
+            # ⚠️ **读属性、不要调 `count_raw_line()`**：那个方法的语义是"每处理完一整行
+            #    调一次 +1"，不是读行数。真机实测这么写会把行数按块虚增（敲 `trial` 五个
+            #    字母 = 五次 +1），于是半行续写的行号对不上、页面判成"行号有缺口"，
+            #    把一段输入拆成一字符一行并挂上"行号不可信"。
             line_no = 0
             if store is not None:
                 try:
-                    line_no = int(store.count_raw_line())
+                    line_no = int(store.raw_lines) + 1
                 except Exception:
                     line_no = 0
             self._emit(
@@ -2358,10 +2403,11 @@ class ObserveSession:
                 ),
             },
             # 终端直输的配置（需求 §4.2 / §8）：回车发什么、退格发什么、要不要本地回显，
-            # 都属于设备/项目配置。**回车默认与命令框同一个行结束符** —— 一个设置一个真相，
-            # 否则“在终端里按回车没反应”这类问题会很难归因（板 A 的固件按 `\n` 收行）。
+            # 都属于设备/项目配置。回车优先读**独立声明** `terminal_enter_ending`（没声明才
+            # 沿用命令框那个行结束符）—— 设备协议的断行与“人按的回车键”不是一件事：
+            # 把 `\r`/`\n` 各自当成一次回车的 shell 收到 `\r\n` 会一条命令跑两次。
             "terminal": {
-                "enter_ending": normalize_line_ending(getattr(target, "line_ending", None)),
+                "enter_ending": normalize_line_ending(terminal_enter_ending(target)),
                 "backspace": normalize_backspace(getattr(target, "terminal_backspace", None)),
                 "backspace_choices": list(BACKSPACE_CHOICES),
                 "local_echo": bool(getattr(target, "terminal_local_echo", False)),

@@ -454,7 +454,9 @@ def web_facts() -> bench_target.Facts:
         project_label=WEB_PROJECT_LABEL,
         port_env=ENV_VARS[f"{DEVICE_KEY}.port"],
         baud=115200,
-        line_ending="crlf",
+        # 这块板的 shell 把 CR / LF **各自**当成一次行结束（真机实测：发 `\r\n` 等于回车两次，
+        # 一条命令跑两遍、屏上连出两行提示符）⇒ 协议与终端都只发 `\r`。
+        line_ending="cr",
         identity_prefix="@PWINFO",
         identity_query="@PWINFO",
         identity_parser=parse_identity,

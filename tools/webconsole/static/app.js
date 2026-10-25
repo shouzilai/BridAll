@@ -58,7 +58,7 @@ const {
 } = globalThis.PWModelSay;
 /* 行模型：文本 → 展示行、追加/裁剪、行号基准、视图推进（不碰 DOM）。 */
 const {
-  MAX_LINES, stripAnsi, toLines, isWatched, appendLineText, appendLineTime, appendMany,
+  MAX_LINES, stripAnsi, visibleControls, toLines, isWatched, appendLineText, appendLineTime, appendMany,
   appendText, setSourceLines, setSourceText, flushPlan, markRendered, trimSource, acceptItem,
   advanceView, resetView, streamLineFrame, streamGapIssue, applyStreamFrame, paneFrameIssue,
 } = globalThis.PWModelLogSource;
@@ -927,12 +927,15 @@ function continueLine(store, id, text, ts, { lineNo = null } = {}) {
   }
   const frame = streamLineFrame(source, lineNo, source.lines.length, true);
   if (frame.issue) {
-    /* ⚠️ 行号对不上 ⇒ 接上去就是给一行**凭空加一个它没有的尾巴**（屏幕上看起来像
-     *    `[I][I]…`）。这一截照实**另起一行**，并把这一窗标成"行号不可信"。 */
+    /* ⚠️ 行号对不上：**照样接在最后一行**，只把“行号不可信”这件事记下来。
+     *    以前这里“照实另起一行”—— 于是一次未成形的退格/回显就把后半段变成独立的一行，
+     *    接着每一截都判不中、每一截再各起一行，屏幕上就是一字符一行（真机实测）。
+     *    续行事件的含义是服务端给的：它是**这一行已经显示过的那截之后的尾巴**，
+     *    接在最后一行在语义上永远成立；行号只是标注，它不准就标注不准。 */
     applyStreamFrame(source, frame);
-    return feed(store, id, text, ts, { lineNo, continuation: false });
+  } else if (frame.base !== null) {
+    applyStreamFrame(source, frame);
   }
-  if (frame.base !== null) applyStreamFrame(source, frame);
   const last = source.lines.length - 1;
   source.lines[last] += String(text ?? "");
   const absolute = source.baseIndex + last;
@@ -1087,14 +1090,14 @@ function highlighted(text, ranges) {
   const fragment = document.createDocumentFragment();
   let cursor = 0;
   for (const [start, end] of ranges) {
-    if (start > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, start)));
+    if (start > cursor) fragment.appendChild(document.createTextNode(visibleControls(text.slice(cursor, start))));
     const mark = document.createElement("mark");
     mark.className = "hit";
-    mark.textContent = text.slice(start, end);
+    mark.textContent = visibleControls(text.slice(start, end));
     fragment.appendChild(mark);
     cursor = end;
   }
-  if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
+  if (cursor < text.length) fragment.appendChild(document.createTextNode(visibleControls(text.slice(cursor))));
   return fragment;
 }
 
@@ -1127,7 +1130,9 @@ function buildLineNode(source, item) {
   if (time) node.dataset.time = `${time} `;
   if (item.repeats > 1) node.dataset.repeat = String(item.repeats);
   if (item.ranges.length) node.appendChild(highlighted(item.text, item.ranges));
-  else node.textContent = item.text;
+  // ⚠️ 控制字符（设备回显的退格 `\x08` 之类）浏览器没有字形，直接塞进文本节点会被画成
+  //    □ 方框 —— 用户看到的“乱码”就是它。照实写成 `\xNN`：模型与证据一个字都不改。
+  else node.textContent = visibleControls(item.text);
   return node;
 }
 
@@ -1323,9 +1328,23 @@ function feed(
     // 这一窗的内容确实是画出来的（带着事件号到达）⇒ 按事件号定位就是它唯一可信的路。
     source.derived = true;
   }
-  const rowsBefore = source ? source.lines.length : 0;
+  let rowsBefore = source ? source.lines.length : 0;
   const rows = toLines(text);
   const numbered = Number.isFinite(Number(lineNo)) && Number(lineNo) >= 1;
+  if (source && numbered && !continuation && rowsBefore > 0
+    && Number(lineNo) < (Number(source.baseIndex) || 0) + rowsBefore) {
+    /* ⚠️ 行号**往回走**了：这不是“有缺口”，而是编号从头开始（新会话 / 重放从头来）。
+     *    硬接着写下去，这一窗的行号与证据就对不上，从此被判“行号不可信”（连定位一起废）。
+     *    所以照实从头跟：这一窗清空、基准落在服务端说的那一行前面，后面的行继续往下数。
+     *    屏幕上因此只留**这次编号**的内容 —— 更早的那一段在证据文件里，不在这一窗里冒充。 */
+    setSourceLines(store, id, []);
+    source.baseIndex = Math.max(0, Math.floor(Number(lineNo)) - 1);
+    source.baseTrust = "exact";
+    source.baseIssue = "";
+    source.streamed = true;
+    rebuildSource(store, id);
+    rowsBefore = 0;
+  }
   /* ⚠️ **一行就是一行**：服务端给了行号（`lineNo`）= 这一行在证据文件里**真实存在** ⇒
    * 哪怕它洗完是空串（裸 CR / 空行 —— STM32 裸机复位时真打过一个 `\r`）也必须占一行。
    * 不然这一窗的行号与文件的行号从此差 1，连续性检查会把它记成“缺口” ⇒ 那一窗
@@ -9203,7 +9222,7 @@ function renderRawResults() {
     const body = document.createElement("span");
     body.className = "result-text";
     if (row.ranges.length) body.appendChild(highlighted(row.text, row.ranges));
-    else body.textContent = row.text;
+    else body.textContent = visibleControls(row.text);
     item.appendChild(body);
     const where = document.createElement("span");
     where.className = "result-where";

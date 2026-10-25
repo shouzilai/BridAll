@@ -188,6 +188,10 @@ def generic_spec_for_port(port: str) -> Any:
         pipeline_allowed=False,
         boundary="通用串口（未适配）：能连、能收发、能断开重连；没有身份与能力声明",
         line_ending="crlf",
+        # 终端里的回车发 `\r`：任何 shell 都认它，而把 `\r`/`\n` 各自当成一次回车的 shell
+        # （RT-Thread msh 实测）收到 `\r\n` 会**一条命令跑两次**。设备协议的行结束保持 `crlf`
+        # —— 有的固件只按 `\n` 断行，两者不能共用一个值。
+        terminal_enter_ending="cr",
         capabilities=caps,
     )
 
@@ -222,6 +226,11 @@ class Facts:
     baud: int = 115200
     line_ending: str = "crlf"
     terminal_backspace: str = "del"
+    #: 终端直输的回车用哪个行结束符（空 = 沿用 `line_ending`）。
+    #: 有的 shell 把 `\r` 与 `\n` **各自**当成一次回车（RT-Thread msh 实测）⇒ 给它发 `\r\n`
+    #: 就是一条命令跑两次、屏上连出两行提示符。所以终端回车默认 `\r`，
+    #: 而 `line_ending`（设备协议的断行）不受影响。
+    terminal_enter_ending: str = "cr"
     #: 身份：前缀（回答长什么样）与查询文本（空 = 只等设备自己说，不发字节）。
     identity_prefix: str = ""
     identity_query: str = ""
@@ -315,6 +324,7 @@ def device_specs(facts: Facts, *, port: str, transport: Transport, caps: Any) ->
             boundary=facts.boundary,
             line_ending=facts.line_ending,
             terminal_backspace=facts.terminal_backspace,
+            terminal_enter_ending=facts.terminal_enter_ending,
             capabilities=caps,
         ),
     )
@@ -350,6 +360,7 @@ def profile_for(
             read_only=True,
             line_ending=facts.line_ending,
             terminal_backspace=facts.terminal_backspace,
+            terminal_enter_ending=facts.terminal_enter_ending,
         ),
         reset=target_profile.ResetPolicy(
             on_open="never",

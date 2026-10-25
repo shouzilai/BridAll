@@ -1298,6 +1298,22 @@ def check_frontend_models_live_outside_the_page() -> None:
         and "= globalThis.PWModelRawResults" in app_js,
         "",
     )
+    log_source_js = (model_dir / "log-source.js").read_text(encoding="utf-8")
+    check(
+        "行视图把控制字符写成可见转义（浏览器没有这些字形，会画成方框）",
+        "function visibleControls(" in log_source_js
+        and "visibleControls," in log_source_js
+        and app_js.count("visibleControls(") >= 3
+        and "node.textContent = item.text" not in app_js
+        and "body.textContent = row.text" not in app_js,
+        "",
+    )
+    check(
+        "一条行事件只长一行（行内 CR 不再被当成换行，否则行号映射会漂）",
+        'clean.replace(/\\r\\n?/g, "\\n")' not in log_source_js
+        and 'clean.split("\\n")' in log_source_js,
+        "",
+    )
     moved = (
         "toEpochMs", "beijingParts", "beijingClock", "beijingStamp", "parseLine", "isErrorLine",
         "lineTime", "formatDuration", "byteUnits", "compactDuration", "shortTime", "shortSha",
@@ -1600,6 +1616,12 @@ def check_backspace_is_selectable() -> None:
         del_payload, _, _ = console_input.build_keys_payload(
             [{"key": "Backspace"}], line_ending="crlf", backspace="del"
         )
+        enter_cr, _, _ = console_input.build_keys_payload(
+            [{"key": "Enter"}], line_ending="cr"
+        )
+        enter_crlf, _, _ = console_input.build_keys_payload(
+            [{"key": "Enter"}], line_ending="crlf"
+        )
     finally:
         if str(CONSOLE_DIR) in sys.path:
             sys.path.remove(str(CONSOLE_DIR))
@@ -1607,6 +1629,17 @@ def check_backspace_is_selectable() -> None:
         "bs 发 0x08、del 发 0x7F（不是同一个字节）",
         bs_payload == b"\x08" and del_payload == b"\x7f",
         f"bs={bs_payload!r} del={del_payload!r}",
+    )
+    observe_py = (CONSOLE_DIR / "observe.py").read_text(encoding="utf-8")
+    bench_py = (CONSOLE_DIR / "bench_target.py").read_text(encoding="utf-8")
+    check(
+        "终端回车用自己那条声明（拿设备协议的 crlf 顶上＝一条命令跑两遍）",
+        enter_cr == b"\r" and enter_crlf == b"\r\n"
+        and 'line_ending=terminal_enter_ending(target),' in observe_py
+        and '"enter_ending": normalize_line_ending(terminal_enter_ending(target)),' in observe_py
+        and 'terminal_enter_ending="cr"' in bench_py
+        and "def terminal_enter_ending(target: Any) -> str:" in observe_py,
+        f"cr={enter_cr!r} crlf={enter_crlf!r}",
     )
 
 
