@@ -166,6 +166,9 @@ class TransportSpec:
     line_ending: str = "crlf"
     terminal_backspace: str = "del"
     terminal_local_echo: bool = False
+    #: 这条串口是一个控制台终端（由目标/项目声明）。只影响**页面默认显示哪种视图**，
+    #: 不改字节流，也不改证据；用户仍可以手动切。
+    terminal_console: bool = False
 
 
 @dataclass(frozen=True)

@@ -71,6 +71,9 @@ class DeviceSpec:
     # 终端直输的退格键发哪个字节（需求 §4.2 要能发退格）：
     #   `del` = 0x7F（现代终端），`bs` = 0x08（嵌入式 console 常见）。
     terminal_backspace: str = "del"
+    # 这条串口**就是一个控制台终端**（设备/项目自己声明）：会话快照里的
+    # `terminal.projection` 由它派生。默认 false —— 平台不把“串口”猜成“终端”。
+    terminal_console: bool = False
     # 本地回显是**显示层**（需求 §4.2）：设备已经在回显时默认关掉，免得字符重复。
     terminal_local_echo: bool = False
     #: 这个目标**具备哪些能力**（ / R2a）：全平台**唯一**一处能力声明。

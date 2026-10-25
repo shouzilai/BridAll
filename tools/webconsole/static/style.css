@@ -2144,3 +2144,71 @@ td .links,
 button,
 select,
 label { user-select: none; }
+
+/* ------------------------------------------- 搜索命中的结果层（终端排版下）
+   只在**终端视图**且有搜索时出现：列命中行，点一行跳回终端里那一行并高亮。
+   级别/模块/排除/只看错误/折叠重复不走这一层（它们直接在终端正文里隐藏行）——
+   结果层回答的是“在哪里”，不是“藏了什么”。 */
+.result-layer {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(45%, 260px);
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid var(--log-row-hover);
+}
+#pane-raw[data-terminal="1"] .result-layer:not([hidden]) {
+  display: flex;
+  max-height: min(45%, 260px);
+}
+.result-layer[hidden] { display: none; }
+.result-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--log-muted);
+  white-space: nowrap;
+}
+.result-head .result-title { overflow: hidden; text-overflow: ellipsis; }
+.result-head .result-note { color: var(--log-muted); }
+.result-head .result-note[data-state="none"] { color: var(--warn); }
+.result-head #resultClear-raw { margin-left: auto; }
+.result-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0 0 4px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-family: var(--log-font-family);
+  font-size: var(--log-font-size);
+  line-height: var(--log-line-h);
+}
+.result-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 8px;
+  cursor: pointer;
+  white-space: pre;
+}
+.result-row:hover { background: var(--log-row-hover); }
+.result-row .result-time { color: var(--log-muted); flex: none; }
+.result-row .result-text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--log-text, inherit);
+}
+.result-row .result-text mark {
+  background: var(--log-mark-bg);
+  color: var(--log-mark-fg);
+  border-radius: 2px;
+}
+.result-row .result-where { color: var(--log-muted); flex: none; }
+/* 被定位到的那一行终端（只改样式，不改内容）：标记一直留着，直到下一次定位。 */
+.term-row[data-located="1"] { background: var(--loc-bg-strong); box-shadow: -3px 0 0 0 var(--loc); }

@@ -69,6 +69,30 @@ const {
   lineBaseFromHeader, lineBaseIndex, evidenceLineIndex, seqRowIndex, locatePlan,
 } = globalThis.PWModelLocate;
 
+/* 全文件搜索的纯函数（`js/model/search.js`）：文案、Range、找行都在那一份里。
+ * 三个与"现在在看什么"有关的入口用别名解构，下面再用同名薄包装补上那一件事。 */
+const {
+  SEARCH_JUMP_PAD_BYTES, searchHitLabel, searchJumpRange, searchRunningText,
+  searchDoneText, searchTextCandidates, findLineIndex,
+  paneFor: searchPaneIn,
+  evidenceChoices: searchEvidenceChoicesIn,
+  largestEvidence: largestSearchEvidenceIn,
+} = globalThis.PWModelSearch;
+
+/* 终端状态机（`js/model/terminal.js`）：CR/LF/BS/TAB、CSI 子集与分块 UTF-8 都在那一份里。
+ * 这个测试钩子的签名因此一个字都没变。 */
+const {
+  TERM_MAX_ROWS, TERM_MAX_COLS,
+  createTermState, termHexBytes, termSnapshotRows, terminalRowPlan, terminalCopyText,
+  termApplyBytes: termApplyBytesInto,
+} = globalThis.PWModelTerminal;
+
+/* 原始串口搜索命中的结果层（`js/model/raw-results.js`）：条件 → 行集合、行 → 行号/事件号。 */
+const {
+  resultCriteria, rawResultRows, rawResultSignature,
+  rawResultTitle, rawResultNote, rawResultWhere,
+} = globalThis.PWModelRawResults;
+
 /* 事件 → 窗口的唯一映射（不认得的 kind 不进任何窗口，计数并说明原因）。 */
 const {
   EVENT_WINDOW_BY_KIND, eventToSource, stageEventMode,
@@ -288,8 +312,6 @@ function loadPaneChoice(saved, choices, fallback) {
   );
 }
 
-
-
 /* 开箱那一份阅读偏好：`app` 建好之前就要用（三份 store 在 `app` 的字面量求值期间就建好了）。
  * ⚠️ 那时读 `app.prefs` 会撞 TDZ（ 的老坑）⇒ 先取一份快照，`app.prefs` 指向同一个对象。 */
 const BOOT_PREFS = loadPrefs();
@@ -412,6 +434,8 @@ const app = {
   cmdHistory: loadCmdHistory(),  // 主机侧命令历史：{ 端口: [命令, …] }
   cmdCursor: null,    // 正在用 ↑/↓ 翻到哪一条（null = 还没翻）
   cmdEndingDevice: "",  // 已经套用过默认行结束符的那个设备（换设备才重新套用）
+  cmdBackspaceDevice: "",  // 已经套用过退格键声明的那个设备（同上：换设备才重新套用）
+  cmdTerminalDevice: "",  // 已经套用过终端视图声明的那个设备（换设备才重新套用）
   // 窗口内直敲（W6-4）：哪个窗口拿着键盘（"" / "raw" / "decoded"）。
   capture: "",
   // 页面加载时服务给的构建戳（）：轮询发现它变了就提示"页面是旧的"。
@@ -893,8 +917,6 @@ const IMPORT_POLL_MAX = 300;
  * 两种都给时，行自己的 `ts` 优先。 */
 
 
-
-
 /* 串口半行会为了低延迟分批到达：后续批次是上一条视觉行的续写，不是新行。
  * `lineNo`（可选）= 这一行在证据里的行号：接得上才接（见 `streamLineFrame`）。 */
 function continueLine(store, id, text, ts, { lineNo = null } = {}) {
@@ -973,8 +995,6 @@ function continueLine(store, id, text, ts, { lineNo = null } = {}) {
 
 /* 整体装载（历史 run、切换 run、清空）：视图被权威证据替换，
  * 所以这一路不再处于“冻结”状态 —— “暂停着但显示最新”是自相矛盾的。 */
-
-
 
 
 /* 恢复某一个窗口：只清**这一个窗口**的未读。
@@ -1831,12 +1851,11 @@ async function copyText(text) {
  * 看得见的那些行**（行尾空白去掉、末尾空行不带走）—— 与行流窗同一个口径：看得见什么就
  * 复制什么，绝不悄悄复制被遮住的那一份。行号/时间戳是 CSS `::before`，不在 `textContent` 里。 */
 function terminalVisibleText() {
-  const host = $("term-raw");
+  const host = $("termLines");
   if (!host) return "";
-  const rows = [...host.querySelectorAll(".term-row")]
-    .map((row) => (row.textContent || "").replace(/\s+$/, ""));
-  while (rows.length && rows[rows.length - 1] === "") rows.pop();
-  return rows.join("\n");
+  return terminalCopyText(
+    [...host.querySelectorAll(".term-row")].map((row) => row.textContent || "")
+  );
 }
 
 async function copyView(id) {
@@ -2189,8 +2208,6 @@ function buildMenu(store, meta) {
 /* 拖某一根分隔条：在**相邻两个窗口**之间重新分配宽度（别的窗口一点不动）。
  * 某一侧窄过 --pane-min-w（PANE_MIN_W）时不再挤它，而是判定“收成标签”。
  * 纯函数：宿主回归直接喂指针位置。 */
-
-
 
 /* 这个窗口里当前的选区（不在窗口里/没有选区就返回 null）。 */
 function rangeIn(host) {
@@ -2798,6 +2815,11 @@ function loadPrefs() {
     },
     // 退格键发 DEL(0x7F) 还是 BS(0x08)：刷新后保持用户选的那一个。
     backspace: saved.backspace === "bs" ? "bs" : "del",
+    // 用户是否**亲手**换过退格键（没换过时要让设备声明有机会生效）。
+    backspaceSet: saved.backspaceSet === true,
+    // 原始窗口要不要显示**终端视图**：`""` = 没手选过（跟设备声明走）。
+    terminalChoice: saved.terminalChoice === "on" || saved.terminalChoice === "off"
+      ? saved.terminalChoice : "",
     // 两个指标窗格各选了哪个指标：刷新后还是自己选的那两个。
     metrics: loadMetricPanes(saved.metrics),
     // 时间窗与纵轴刻度也是阅读偏好（同一份数据，看整体还是看抖动）。
@@ -4379,8 +4401,6 @@ function observeStatCompact(observe) {
  *   - 设备自报的字段属于“关键项”（标准及以上）——那是这一路最直接的证据；
  *   - `schema` / `protocols` 与字典的 ELF 指纹属于**机器对机器**的字段，只在详细档铺开。 */
 
-
-
 /* 身份**结论**（屏幕上那几枚 chip 的文字）—— 用户口径 2026-10-11 验收 P1：
  * 「主界面仅保留身份结论，例如“身份已确认 / 字典不匹配”；完整原因和字典清单移入悬停或详情入口」。
  *
@@ -4929,6 +4949,7 @@ function renderObserve(observe) {
   renderLiveTests();
   applyLineEndingDefault(observe);
   applyBackspaceDefault(observe);
+  applyTerminalProjection(observe);
   // 捕获状态跟“连没连上”有关：没连着就不把键盘给窗口（没设备可发字节）。
   // 平台不识别固件能力，所以这里不判断“支持不支持终端”。
   if (!captureConnected()) releaseCapture();
@@ -5633,10 +5654,11 @@ function applyBackspaceDefault(observe) {
   const key = target ? target.key : "";
   if (!key || app.cmdBackspaceDevice === key) return;
   app.cmdBackspaceDevice = key;
-  // 用户手选过的值优先（存在偏好里）：他刚踩过的坑不该因为换设备又被复原。
-  const saved = app.prefs && app.prefs.backspace;
-  select.value = saved || observe.terminal.backspace || "del";
-  if (app.prefs) { app.prefs.backspace = select.value; savePrefs(); }
+  // 顺序：**用户手选过的**（`backspaceSet`）> 设备声明 > 默认 DEL。
+  // ⚠️ 不能只看 `app.prefs.backspace` 有没有值 —— 解码时它总有个默认值，
+  //    那样设备声明的 BS 永远轮不到（用户第一次连上仍会看到方块）。
+  const picked = app.prefs && app.prefs.backspaceSet ? app.prefs.backspace : "";
+  select.value = picked || observe.terminal.backspace || "del";
 }
 
 function applyLineEndingDefault(observe) {
@@ -6796,8 +6818,6 @@ function renderMetrics(metrics, mode = app.mode) {
 
 /** Stable across redraws: ordering comes from the project's first-seen task order. */
 
-
-
 function multiSeriesCard(entry, restarts, pane) {
   const card = document.createElement("div");
   card.className = "chart chart-multi";
@@ -6942,6 +6962,20 @@ const DOMAIN_TEXT = { evidence: "证据与日志健康", business: "业务结论
 
 function renderAssertions(assertions) {
   app.assertionRows = Array.isArray(assertions) ? assertions.slice() : [];
+  // 证据入口：report.json 就在这次 run 的证据目录里，就在这一栏直接给链接。
+  // 服务端 `/api/runs/<id>/evidence/<name>?download=1` 一直支持，缺的只是这个入口 ——
+  // 没有它，想核对一条断言只能自己去翻目录，或者绕到指标那一栏去。
+  const links = $("assertLinks");
+  if (links) {
+    links.textContent = "";
+    if (app.viewing) {
+      const a = document.createElement("a");
+      a.href = `/api/runs/${encodeURIComponent(app.viewing)}/evidence/report.json?download=1`;
+      a.textContent = "report.json";
+      a.title = "下载本轮 run 的 report.json（完整判据与实测值）";
+      links.appendChild(a);
+    }
+  }
   const host = $("paneAssert");
   host.textContent = "";
   if (!app.assertionRows.length) {
@@ -7090,12 +7124,6 @@ function clearRunMessage() {
  * 全部是纯函数（`historyModel()` 一行不碰 DOM），宿主模型回归直接喂它三类数据。 */
 /* 会话状态：**只说这一份记录的状态**，不用 PASS/FAIL 那套 run 语义（会话说的是观察，
  * 不是“测试通过”）。空会话目录 / 接口失败 / 会话不存在各有各的话（§12.1 第 4 条）。 */
-
-
-
-
-
-
 
 /* 空 / 加载中 / 接口失败：三种状态各有各的话，**不冒充加载成功**（§12.1 第 4 条）。 */
 
@@ -7501,108 +7529,20 @@ function applyHistoricalSources(store, view, payload, detail, windows) {
 }
 
 /* ------------------------------------------------- 全文件搜索（L4：纯函数） */
-/* 这一组只负责"把事实说成一句话"与"算出该取哪一段字节"，不碰网络也不碰 DOM ——
- * 宿主回归（`test_webconsole.py` 的模型回归）直接驱动它们。 */
-
-function searchHitLabel(hit, index) {
-  const row = hit || {};
-  const line = Number(row.line_no);
-  const where = Number.isFinite(line) && line > 0 ? `第 ${line} 行` : "行号未定";
-  const flag = row.at_block_start ? "（上下文可能从中间开始）" : "";
-  return `${index ? index + ". " : ""}字节 ${row.offset} · ${where}${flag} · ${row.text}`;
+/* 这一组只负责"把事实说成一句话"与"算出该取哪一段字节"：实现住在
+ * `static/js/model/search.js`（纯函数，不碰网络也不碰 DOM、不碰定时器）。
+ * 下面三个是**薄包装** —— 它们只把"现在在看 run 还是会话"这件事补成参数，
+ * 判定逻辑一行都不留在这里（留第二份就是两处会漂的实现）。 */
+function searchPaneFor(evidence) {
+  return searchPaneIn(evidence, searchEvidenceMap());
 }
 
-/* 一条命中该按哪个 Range 取回来：以命中的字节为中心，两端夹到文件内。
- * 返回值就是 `bytes=start-end` 那两个数；算不出来（没有大小）就给 null。 */
-function searchJumpRange(hit, totalBytes, pad) {
-  const size = Number(totalBytes) || 0;
-  const offset = Number(hit && hit.offset);
-  if (!size || !Number.isFinite(offset) || offset < 0) return null;
-  const width = Math.max(1, Number(pad) || SEARCH_JUMP_PAD_BYTES);
-  return [Math.max(0, offset - width), Math.min(size - 1, offset + width)];
+function searchEvidenceChoices(rows) {
+  return searchEvidenceChoicesIn(rows, Object.values(searchEvidenceMap()));
 }
 
-function searchRunningText(payload) {
-  const progress = (payload && payload.progress) || {};
-  const scanned = Number(progress.scanned_bytes) || 0;
-  // 刚起完任务时还没有进度快照：那就用任务自己的快照边界，
-  // 不能写成"0 B / 0 B" —— 那看起来像在扫一个空文件。
-  const total =
-    Number(progress.total_bytes)
-    || Number(payload && payload.task && payload.task.size)
-    || 0;
-  const hits = Number(progress.hits) || 0;
-  return `扫描中：${byteText(scanned)} / ${byteText(total)} · 已命中 ${hits} 条`;
-}
-
-/* 收尾那句话必须**分得清**四种结束：扫完 / 到上限 / 取消 / 超时。
- * 把后面三种说成"没命中"就是拿一个假结论骗人。 */
-function searchDoneText(payload) {
-  const row = payload || {};
-  const hits = row.hits || [];
-  const progress = row.progress || {};
-  const scanned = Number(progress.scanned_bytes) || 0;
-  const total = Number(progress.total_bytes) || 0;
-  if (row.state === "cancelled") {
-    return `已取消：扫到 ${byteText(scanned)} / ${byteText(total)}，命中 ${hits.length} 条（后面还没扫）`;
-  }
-  if (row.state === "timeout") {
-    return `超时停下：扫到 ${byteText(scanned)} / ${byteText(total)}，命中 ${hits.length} 条（后面还没扫）`;
-  }
-  if (row.state === "error") {
-    return `搜索失败：${row.error || "服务端报错"}`;
-  }
-  if (row.truncated) {
-    return `命中已达上限，只报前 ${hits.length} 条（扫描停在 ${byteText(scanned)} / ${byteText(total)}，后面还没扫）`;
-  }
-  return `扫完全部 ${byteText(total)}，命中 ${hits.length} 条`;
-}
-
-/* 拿到"命中那一段文字"在已加载行里的下标（拿来高亮 / 滚到可见处）。
- * 找不到就返回 -1 —— 不猜一个位置出来。 */
-/* 服务端给的“命中上下文”不一定能直接拿去找行（真机实测，）：
- * ① 超长行会被**截断**，两头带 `…` —— 那是**服务端的标记**，文件里没有这个字符；
- * ② 上下文里可能有**单独的 CR**，而面板把 CR 也当断行（`toLines`）⇒
- *    一条服务端“行”在窗口里是好几行，整段前缀跨了行。
- * 所以先把它拆成几条**候选片段**（长的先试）：去省略号 → 按 CR/LF 拆。
- * 实测（raw.bin 搜 `842`，26 条命中）：前两条正因此找不到行，第 3～5 条刚好是干净的一行。
- */
-const SEARCH_FRAGMENT_MIN = 4;
-
-function searchTextCandidates(text) {
-  const whole = String(text == null ? "" : text).trim();
-  if (!whole) return [];
-  const body = whole.replace(/^…+/, "").replace(/…+$/, "").trim();
-  const seen = new Set();
-  const out = [];
-  for (const piece of [whole, body, ...body.split(/\r\n|\r|\n/)]) {
-    const value = piece.trim();
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    out.push(value);
-  }
-  const long = out.filter((value) => value.length >= SEARCH_FRAGMENT_MIN);
-  return (long.length ? long : out).sort((a, b) => b.length - a.length);
-}
-
-/* 拿到“命中那一段文字”在已加载行里的下标（拿来高亮 / 滚到可见处）。找不到就返回 -1 —— 不猜。
- * ⚠️ 逐条候选试：**唯一命中**优先（先整行相等、再子串）；全都多处能对上时用第一条
- *    （不猜“更准”的位置，也不因为猜不准就什么都不做）。 */
-function findLineIndex(lines, text) {
-  const rows = lines || [];
-  if (!rows.length) return -1;
-  let fallback = -1;
-  for (const candidate of searchTextCandidates(text)) {
-    const exact = rows.indexOf(candidate);
-    if (exact >= 0) return exact;
-    const matches = [];
-    for (let index = 0; index < rows.length; index += 1) {
-      if (String(rows[index]).indexOf(candidate) >= 0) matches.push(index);
-    }
-    if (matches.length === 1) return matches[0];
-    if (matches.length && fallback < 0) fallback = matches[0];
-  }
-  return fallback;
+function largestSearchEvidence(rows) {
+  return largestSearchEvidenceIn(rows, Object.values(searchEvidenceMap()));
 }
 
 /* 把某一行在**它自己那一窗里**居中。
@@ -7828,17 +7768,9 @@ function scrollLineIntoView(paneId, index) {
  * 窗口模式的搜索框会自己写明"只搜索已加载区间"。 */
 
 const SEARCH_POLL_MS = 400;
-const SEARCH_JUMP_PAD_BYTES = 32 * 1024;
 
 function searchEvidenceMap() {
   return app.mode === "offline" ? SESSION_EVIDENCE_FOR_PANE : RUN_EVIDENCE_FOR_PANE;
-}
-
-function searchPaneFor(evidence) {
-  for (const [paneId, name] of Object.entries(searchEvidenceMap())) {
-    if (name === evidence) return paneId;
-  }
-  return "";
 }
 
 /* 这次全文搜索针对哪一份实体：run 还是会话 —— 由"现在在看什么"决定。 */
@@ -7855,31 +7787,9 @@ function searchEntity() {
  * 会话详情以前**不带** `artifacts_meta`（只有 run 详情带），于是回看一个会话时
  * 那些可搜的证据一个都列不出来 —— 真浏览器上就是这样露的馅，已从服务端修掉。
  */
-function searchEvidenceChoices(rows) {
-  const names = new Set(Object.values(searchEvidenceMap()));
-  const out = [];
-  for (const row of rows || []) {
-    if (row && row.name && (names.has(row.name) || Number(row.bytes) > 0)) out.push(row);
-  }
-  return out;
-}
-
 /* 默认搜哪一份：**最大**的那份（会话里通常就是 raw.bin）。
  * ⚠️ 这只是兑底；真正的“默认值”在下面 `preferredSearchEvidence()`（它优先选正在滚动的那一份）。
  */
-function largestSearchEvidence(rows) {
-  let best = "";
-  let size = -1;
-  for (const row of searchEvidenceChoices(rows)) {
-    const bytes = Number(row.bytes) || 0;
-    if (bytes > size) {
-      size = bytes;
-      best = row.name;
-    }
-  }
-  return best;
-}
-
 function cancelSearchPoll() {
   if (app.fullSearchTimer) {
     clearTimeout(app.fullSearchTimer);
@@ -9045,16 +8955,7 @@ function hookSurfaceGaps(target, spec) {
  * 未知序列不崩：吞掉它，原始字节始终完整地留在 `raw.bin` 与行视图里。
  * 终端只是**显示层**：行模型、筛选、搜索、下载都不受影响。
  */
-const TERM_MAX_ROWS = 2000;
-const TERM_MAX_COLS = 400;
-const TERM_TAB = 8;
-
-function createTermState() {
-  return {
-    rows: [[]], row: 0, col: 0, follow: true, partial: new Uint8Array(0),
-    lns: [null], times: [null], nextLn: null, nextTs: "",
-  };
-}
+/* 状态对象由模型创建（`js/model/terminal.js`）：页面只持有自己那一份实例。 */
 
 let TERM_STATE = null;
 
@@ -9073,185 +8974,43 @@ function terminalOn() {
   return Boolean(pane && pane.dataset.terminal === "1");
 }
 
-function setTerminalView(on) {
+function setTerminalView(on, { remember = false } = {}) {
   const pane = $("pane-raw");
   if (!pane) return;
   if (on) pane.dataset.terminal = "1";
   else delete pane.dataset.terminal;
   const button = $("terminal-raw");
   if (button) button.setAttribute("aria-pressed", on ? "true" : "false");
+  if (remember && app.prefs) {
+    // 用户亲手切过：以后换设备也按他的选择来（与退格键同一口径）。
+    app.prefs.terminalChoice = on ? "on" : "off";
+    savePrefs();
+  }
   if (on) renderTerminalNow();
+  renderRawResults();
 }
 
-function termRowChars(state, index) {
-  while (state.rows.length <= index) {
-    state.rows.push([]);
-    state.lns.push(state.nextLn);
-    state.times.push(state.nextTs);
-  }
-  return state.rows[index];
+/* 原始窗口默认显示哪种视图（需求 §4.2）：
+ * 顺序 = **用户手选过的** > 设备/项目声明 `terminal.projection` > 关。
+ * 只影响一开始显示哪一种，手动开关一个字没删 —— 声明只提供默认值。
+ * ⚠️ 与退格键同一条口径：只在**换设备**时套用，否则每次 2 s 轮询都会把用户刚切的视图拨回去。 */
+function applyTerminalProjection(observe) {
+  const pane = $("pane-raw");
+  if (!pane || !observe || !observe.terminal) return;
+  const target = observe.device || observe.target;
+  const key = target ? target.key : "";
+  if (!key || app.cmdTerminalDevice === key) return;
+  app.cmdTerminalDevice = key;
+  const picked = app.prefs && app.prefs.terminalChoice;
+  setTerminalView(picked ? picked === "on" : observe.terminal.projection === true);
 }
 
-function termWriteChar(state, ch) {
-  const chars = termRowChars(state, state.row);
-  if (state.col > chars.length) {
-    while (chars.length < state.col) chars.push(" ");
-  }
-  if (state.col < TERM_MAX_COLS) {
-    chars[state.col] = ch;
-    state.col += 1;
-  }
-}
-
-function termNewline(state) {
-  state.row += 1;
-  state.col = 0;
-  termRowChars(state, state.row);
-}
-
-function termEraseToEnd(state) {
-  const chars = termRowChars(state, state.row);
-  if (state.col < chars.length) chars.length = state.col;
-}
-
-function termClearScreen(state) {
-  state.rows = [[]];
-  state.row = 0;
-  state.col = 0;
-}
-
-function termCsi(state, params, final) {
-  const parts = String(params || "").replace(/^\?/, "").split(";");
-  const first = Math.max(1, Math.min(200, Number(parts[0] || 1) || 1));
-  if (final === "K") {
-    termEraseToEnd(state);
-    return;
-  }
-  if (final === "J" && (parts[0] === "2" || parts[0] === "3" || parts[0] === "")) {
-    termClearScreen(state);
-    return;
-  }
-  if (final === "H" || final === "f") {
-    const rowNo = Number(parts[0] || 1) || 1;
-    const colNo = Number(parts[1] || 1) || 1;
-    state.row = Math.max(0, Math.min(TERM_MAX_ROWS - 1, rowNo - 1));
-    state.col = Math.max(0, Math.min(TERM_MAX_COLS, colNo - 1));
-    termRowChars(state, state.row);
-    return;
-  }
-  if (final === "A") {
-    state.row = Math.max(0, state.row - first);
-    termRowChars(state, state.row);
-    return;
-  }
-  if (final === "B") {
-    state.row += first;
-    termRowChars(state, state.row);
-    return;
-  }
-  if (final === "C") {
-    state.col = Math.min(TERM_MAX_COLS, state.col + first);
-    return;
-  }
-  if (final === "D") {
-    state.col = Math.max(0, state.col - first);
-    return;
-  }
-  /* 其它（m 颜色、?25 光标、私有序列……）：不渲染、不崩。 */
-}
-
-/* 一段原始字节 → 终端状态。不足一个 UTF-8 字符的尾巴留着等下一段（不画半个字）。 */
+/* 测试钩子与内部调用都保持"给字节、改页面自己的状态"这个语义；状态机在模型里。 */
 function termApplyBytes(bytes) {
-  const state = termState();
-  const feed = state.partial.length
-    ? new Uint8Array([...state.partial, ...bytes])
-    : bytes;
-  state.partial = new Uint8Array(0);
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  let index = 0;
-  while (index < feed.length) {
-    const byte = feed[index];
-    if (byte === 0x1b) {
-      if (index + 1 >= feed.length) {
-        state.partial = feed.slice(index);
-        return;
-      }
-      if (feed[index + 1] === 0x5b) {
-        let at = index + 2;
-        let params = "";
-        while (at < feed.length) {
-          const ch = feed[at];
-          const digit = ch >= 0x30 && ch <= 0x39;
-          if (!digit && ch !== 0x3b && ch !== 0x3f) break;
-          params += String.fromCharCode(ch);
-          at += 1;
-        }
-        if (at >= feed.length) {
-          state.partial = feed.slice(index);
-          return;
-        }
-        termCsi(state, params, String.fromCharCode(feed[at]));
-        index = at + 1;
-        continue;
-      }
-      index += 2;   // 非 CSI 的 ESC 序列：吞掉这两个字节
-      continue;
-    }
-    if (byte === 0x0d) {
-      state.col = 0;
-      index += 1;
-      continue;
-    }
-    if (byte === 0x0a) {
-      termNewline(state);
-      index += 1;
-      continue;
-    }
-    if (byte === 0x08) {
-      if (state.col > 0) state.col -= 1;
-      index += 1;
-      continue;
-    }
-    if (byte === 0x09) {
-      const next = (Math.floor(state.col / TERM_TAB) + 1) * TERM_TAB;
-      while (state.col < next && state.col < TERM_MAX_COLS) termWriteChar(state, " ");
-      index += 1;
-      continue;
-    }
-    if (byte < 0x20 || byte === 0x7f) {
-      index += 1;
-      continue;
-    }
-    const need = byte < 0x80 ? 1
-      : (byte >> 5) === 0x6 ? 2
-        : (byte >> 4) === 0xe ? 3
-          : (byte >> 3) === 0x1e ? 4 : 0;
-    if (!need) {
-      index += 1;
-      continue;
-    }
-    if (index + need > feed.length) {
-      state.partial = feed.slice(index);
-      return;
-    }
-    termWriteChar(state, decoder.decode(feed.slice(index, index + need)));
-    index += need;
-  }
-  if (state.rows.length > TERM_MAX_ROWS) {
-    const drop = state.rows.length - TERM_MAX_ROWS;
-    state.rows.splice(0, drop);
-    state.row = Math.max(0, state.row - drop);
-  }
+  termApplyBytesInto(termState(), bytes);
+  return termState();
 }
 
-function termHexBytes(hex) {
-  const text = String(hex || "");
-  const bytes = new Uint8Array(Math.floor(text.length / 2));
-  for (let at = 0; at < bytes.length; at += 1) {
-    bytes[at] = Number.parseInt(text.slice(at * 2, at * 2 + 2), 16) || 0;
-  }
-  return bytes;
-}
 
 function termFeedEvent(event) {
   if (!terminalOn()) return;
@@ -9259,25 +9018,14 @@ function termFeedEvent(event) {
   state.nextLn = Number((event && event.line_no) || 0) || null;
   state.nextTs = String((event && event.ts) || "");
   if (event && event.bytes_hex) {
-    termApplyBytes(termHexBytes(event.bytes_hex));
+    termApplyBytesInto(state, termHexBytes(event.bytes_hex));
   } else {
     // 旧服务 / 旧录音没有字节：按解码后的这一行 + 换行显示（行号/时间戳仍然可用）。
-    termApplyBytes(new TextEncoder().encode(`${String((event && event.line) || "")}\n`));
+    termApplyBytesInto(state, new TextEncoder().encode(`${String((event && event.line) || "")}\n`));
   }
   renderTerminalNow();
 }
 
-function termSnapshotRows(state) {
-  return state.rows.map((chars, index) => {
-    const text = chars.join("");
-    if (index !== state.row) return { before: text, at: "", after: "" };
-    return {
-      before: chars.slice(0, state.col).join(""),
-      at: chars[state.col] || " ",
-      after: chars.slice(state.col + 1).join(""),
-    };
-  });
-}
 
 /* 这一窗当前挂着的视图（行视图与终端视图**共用同一份条件**：排除、只看错误、级别/模块、
  * 折叠重复、搜索、行号/时间戳）。取不到就返回 null，终端就只画正文，不自己编一套条件。 */
@@ -9299,39 +9047,30 @@ function renderTerminalNow() {
   if (!host) return;
   const state = termState();
   const view = termRawView();
-  const filtering = Boolean(view && typeof view.level === "string");
-  const dedupe = Boolean(view && view.dedupe);
   host.dataset.wrap = view && view.wrap === false ? "0" : "1";
   host.dataset.prefix = view && view.lineNumbers && view.timestamps ? "both"
     : view && view.lineNumbers ? "ln"
       : view && view.timestamps ? "time" : "none";
-  const compiled = view && view.query ? compileQuery(view) : { re: null };
-  const re = compiled.re || null;
-  const currentSlot = Number((view && view.hitCursor) || 0);
-  let hits = 0;
-  let previousText = null;
-  let repeatNode = null;
-  let repeatCount = 0;
-  let scrollTarget = null;
+  const re = view && view.query ? (compileQuery(view).re || null) : null;
+  // 哪些行看得见、命中在哪、滚到哪一行：全由模型算（`js/model/terminal.js`）。
+  const plan = terminalRowPlan({
+    snapshot: termSnapshotRows(state),
+    row: state.row,
+    lns: state.lns,
+    times: state.times,
+    view,
+    hidden: (text) => hiddenReason(view, text),
+    ranges: (text) => (re ? matchRanges(re, text) : []),
+  });
   const fragment = document.createDocumentFragment();
-  const snapshot = termSnapshotRows(state);
-  for (let index = 0; index < snapshot.length; index += 1) {
-    const row = snapshot[index];
-    const text = row.at ? `${row.before}${row.at}${row.after}` : row.before;
-    // 条件与行视图**同一条口径**：看不见的行一个节点也不建（为何看不见由行视图的模型回答）。
-    if (filtering && hiddenReason(view, text)) continue;
-    if (dedupe && previousText === text && repeatNode) {
-      repeatCount += 1;
-      repeatNode.dataset.repeat = String(repeatCount);
-      continue;
-    }
+  const nodes = [];
+  for (const row of plan.rows) {
     const line = document.createElement("div");
     line.className = "term-row";
-    if (state.lns[index]) line.dataset.ln = `${state.lns[index]} `;
-    if (state.times[index]) line.dataset.time = `${beijingClock(state.times[index])} `;
-    const ranges = re ? matchRanges(re, text) : [];
-    const isCursorRow = index === state.row;
-    if (isCursorRow) {
+    if (row.ln) line.dataset.ln = `${row.ln} `;
+    if (row.ts) line.dataset.time = `${beijingClock(row.ts)} `;
+    if (row.repeat > 1) line.dataset.repeat = String(row.repeat);
+    if (row.isCursorRow) {
       // 光标行：正文、光标块、后文三段拼起来（命中高亮不嵌在光标块里）。
       line.append(document.createTextNode(row.before));
       const cursor = document.createElement("span");
@@ -9339,34 +9078,28 @@ function renderTerminalNow() {
       cursor.textContent = row.at || " ";
       line.append(cursor);
       line.append(document.createTextNode(row.after));
-      if (ranges.length) scrollTarget = scrollTarget || line;
-    } else if (ranges.length) {
-      let slot = hits;
+    } else if (row.ranges.length) {
       let cursorAt = 0;
-      for (const [start, end] of ranges) {
-        if (start > cursorAt) line.append(document.createTextNode(text.slice(cursorAt, start)));
+      let slot = row.slotStart;
+      for (const [start, end] of row.ranges) {
+        if (start > cursorAt) line.append(document.createTextNode(row.text.slice(cursorAt, start)));
         const mark = document.createElement("mark");
         mark.className = "hit";
-        if (slot === currentSlot) {
-          mark.classList.add("current");
-          scrollTarget = line;
-        }
-        mark.textContent = text.slice(start, end);
+        if (slot === plan.currentSlot) mark.classList.add("current");
+        mark.textContent = row.text.slice(start, end);
         line.append(mark);
         cursorAt = end;
         slot += 1;
       }
-      if (cursorAt < text.length) line.append(document.createTextNode(text.slice(cursorAt)));
+      if (cursorAt < row.text.length) line.append(document.createTextNode(row.text.slice(cursorAt)));
     } else {
-      line.textContent = text;
+      line.textContent = row.text;
     }
-    hits += ranges.length;
-    previousText = text;
-    repeatNode = line;
-    repeatCount = 1;
+    nodes.push(line);
     fragment.append(line);
   }
   host.replaceChildren(fragment);
+  const scrollTarget = plan.scrollIndex >= 0 ? nodes[plan.scrollIndex] : null;
   if (scrollTarget) {
     const target = scrollTarget.offsetTop - host.clientHeight / 2 + scrollTarget.offsetHeight / 2;
     host.scrollTop = Math.max(0, target);
@@ -9374,12 +9107,157 @@ function renderTerminalNow() {
   } else if (state.follow) {
     host.scrollTop = host.scrollHeight;
   }
-  updateTerminalHits(hits, currentSlot, Boolean(view && view.query));
+  updateTerminalHits(plan.hits, plan.currentSlot, Boolean(view && view.query));
+  renderRawResults();
+}
+
+/* -------------------------------------------------- 原始串口：搜索命中的结果层
+ * 两类条件的去处不同：级别/模块/排除/只看错误/折叠重复 = **改行集合** ⇒ 直接在终端
+ * 正文里隐藏（`terminalRowPlan`）；搜索 = “在哪里” ⇒ 正文高亮 + 这一层给一份可跳回的
+ * 命中清单。结果层不是第二份正文：每一行都是行模型里的第 N 行（同一份 `source.lines`）。
+ * 条件判定与文案在 `js/model/raw-results.js`。 */
+
+function rawResultSource() {
+  const sources = (typeof attachedLog !== "undefined" && attachedLog && attachedLog.sources) || null;
+  return sources ? sources.raw : null;
+}
+
+function renderRawResults() {
+  const host = $("result-raw");
+  const list = $("resultRows-raw");
+  const title = $("resultTitle-raw");
+  const note = $("resultNote-raw");
+  if (!host || !list) return;
+  const source = rawResultSource();
+  // 只有**终端排版**时才需要这一层：按行显示时，搜索本来就直接画在行视图里。
+  if (!source || !terminalOn()) {
+    host.hidden = true;
+    list.textContent = "";
+    if (title) title.textContent = "";
+    delete host.dataset.signature;
+    return;
+  }
+  const view = source.view;
+  const criteria = resultCriteria(view);
+  if (!criteria.length) {
+    host.hidden = true;
+    list.textContent = "";
+    // 隐藏时把旧标题也抹掉：不清的话下一次「清除」之后标题还写着上一轮的关键词。
+    if (title) title.textContent = "";
+    delete host.dataset.signature;
+    return;
+  }
+  host.hidden = false;
+  if (title) title.textContent = rawResultTitle(criteria);
+  const signature = rawResultSignature(source, view);
+  if (host.dataset.signature === signature) return;
+  host.dataset.signature = signature;
+  const result = rawResultRows(source, view);
+  list.textContent = "";
+  if (note) {
+    note.textContent = rawResultNote(result);
+    note.dataset.state = result.total ? "" : "none";
+  }
+  const fragment = document.createDocumentFragment();
+  for (const row of result.rows) {
+    const item = document.createElement("li");
+    item.className = "result-row";
+    item.dataset.line = String(row.line);
+    if (row.seq !== null) item.dataset.seq = String(row.seq);
+    const time = lineTimeLabel(source, source.baseIndex + row.index, row.text);
+    if (time) {
+      const stamp = document.createElement("span");
+      stamp.className = "result-time";
+      stamp.textContent = time;
+      item.appendChild(stamp);
+    }
+    const body = document.createElement("span");
+    body.className = "result-text";
+    if (row.ranges.length) body.appendChild(highlighted(row.text, row.ranges));
+    else body.textContent = row.text;
+    item.appendChild(body);
+    const where = document.createElement("span");
+    where.className = "result-where";
+    where.textContent = rawResultWhere(row);
+    item.appendChild(where);
+    item.title = "点一下跳到终端里的这一行并高亮";
+    item.addEventListener("click", () => jumpToRawResult(row.line, row.text));
+    fragment.appendChild(item);
+  }
+  list.appendChild(fragment);
+  host.dataset.rows = String(result.rows.length);
+}
+
+/* 证据行号 → 终端里的行下标（终端只记着**本次连接**收到的行）。找不到就返回 null —— 不估算。
+ *
+ * 优先按**命中那段文字**找（与全文件搜索的 `findLineIndex` 同一思路），因为终端是字节重放：
+ * `\r\n` 让内容落在上一行、新空行继承同一条行号，纯按行号找会差一行。行号映射留作兜底。 */
+function termRowForLine(lineNo, text) {
+  const state = termState();
+  const snapshot = termSnapshotRows(state);
+  const rowsText = snapshot.map((row) => (row.at ? `${row.before}${row.at}${row.after}` : row.before));
+  const target = String(text || "").trim();
+  if (target) {
+    const trimmed = rowsText.map((row) => row.replace(/\s+$/, ""));
+    const exact = trimmed.indexOf(target);
+    if (exact >= 0) return exact;
+    const hits = [];
+    trimmed.forEach((row, index) => { if (row.includes(target)) hits.push(index); });
+    if (hits.length) return hits[0];
+  }
+  const want = Number(lineNo);
+  if (!Number.isFinite(want)) return null;
+  for (let index = 0; index < state.lns.length; index += 1) {
+    if (Number(state.lns[index]) === want) return index;
+  }
+  return null;
+}
+
+/* 指一下那一行：滚到可见处并高亮（只改样式与本窗滚动，不改内容）。
+ * 标记**留着**（与按行显示那边的 `data-hit` 同一种寿命）：换一处定位时才把旧的摘掉。 */
+function highlightTerminalRow(row) {
+  const host = $("termLines");
+  if (!host) return;
+  const node = host.childNodes[row];
+  if (!node) return;
+  for (const other of host.querySelectorAll('.term-row[data-located="1"]')) {
+    delete other.dataset.located;
+  }
+  node.dataset.located = "1";
+  const target = node.offsetTop - host.clientHeight / 2 + node.offsetHeight / 2;
+  host.scrollTop = Math.max(0, target);
+}
+
+function jumpToRawResult(lineNo, text) {
+  const row = termRowForLine(lineNo, text);
+  if (row === null) {
+    // 映射缺失就如实说 —— 不跳到“差不多”的行。
+    const source = rawResultSource();
+    if (source) {
+      paneNotice(source, `第 ${lineNo} 行没有对应的终端位置：终端只记着本次连接，原文见 raw.bin`);
+    }
+    return false;
+  }
+  highlightTerminalRow(row);
+  return true;
+}
+
+/* 结果层的「清除」：只清搜索（不动级别/模块这类筛选），终端里被隐掉的行随之回来。 */
+function wireResultLayer() {
+  const button = $("resultClear-raw");
+  if (!button) return;
+  button.addEventListener("click", () => {
+    const source = rawResultSource();
+    if (!source) return;
+    source.view.query = "";
+    if (source.searchInput) source.searchInput.value = "";
+    refreshView(app.log, "raw");
+  });
 }
 
 function wireTerminalView() {
   const button = $("terminal-raw");
-  if (button) button.addEventListener("click", () => setTerminalView(!terminalOn()));
+  if (button) button.addEventListener("click", () => setTerminalView(!terminalOn(), { remember: true }));
   const host = $("termLines");
   if (host) {
     host.addEventListener("scroll", () => {
@@ -9977,6 +9855,7 @@ function boot() {
   if ($("observeBackspace")) {
     $("observeBackspace").addEventListener("change", () => {
       app.prefs.backspace = currentBackspace();
+      app.prefs.backspaceSet = true;
       savePrefs();
       refreshCmdHint();
     });
@@ -10045,6 +9924,7 @@ function boot() {
   wireConsoleInput();
   wirePaneCapture();
   wireTerminalView();
+  wireResultLayer();
   wireCommandDock();
   window.addEventListener("hashchange", () => {
     const match = /run=([^&]+)/.exec(window.location.hash);

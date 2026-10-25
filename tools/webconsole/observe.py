@@ -2325,6 +2325,12 @@ class ObserveSession:
                 "backspace": normalize_backspace(getattr(target, "terminal_backspace", None)),
                 "backspace_choices": list(BACKSPACE_CHOICES),
                 "local_echo": bool(getattr(target, "terminal_local_echo", False)),
+                # 设备/项目声明“这条串口是终端”：页面用它决定**默认**显示哪种视图。
+                # 用户手选过就以用户为准；声明为 false 时维持页面原来的手动开关语义。
+                "projection": bool(getattr(target, "terminal_console", False)),
+                # 设备/项目声明“这条串口是终端”：页面用它决定**默认**显示哪种视图。
+                # 用户手选过就以用户为准；声明为 false 时维持页面原来的手动开关语义。
+                "projection": bool(getattr(target, "terminal_console", False)),
                 # 哪些按键**本身不产生字节**（只按下修饰键）也由服务端告知：
                 # 否则页面会把这些按键当一批发上来，服务端只能 400，
                 # 而用户看到的就是一条“发送失败”的提示 —— 其实什么都没错。

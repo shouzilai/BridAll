@@ -450,6 +450,16 @@ def check_serial_settings() -> None:
         )
         check("带串口参数连接 = 202", status == 202, f"{status} {payload}")
         serial = (payload.get("observe") or {}).get("serial") or {}
+        terminal = (payload.get("observe") or {}).get("terminal") or {}
+        check("会话快照给了 terminal.projection（默认 false：不拿串口去猜终端）",
+              isinstance(terminal.get("projection"), bool) and terminal.get("projection") is False,
+              json.dumps(terminal, ensure_ascii=False)[:200])
+        from webconsole import device_registry, target_profile  # noqa: PLC0415
+
+        check("设备登记与传输声明都能写 terminal_console（默认不声明）",
+              device_registry.DeviceSpec.__dataclass_fields__["terminal_console"].default is False
+              and target_profile.TransportSpec.__dataclass_fields__["terminal_console"].default is False,
+              "")
         check("服务端把这一套参数当成生效值",
               str((serial.get("effective") or {}).get("baud")) == "9600",
               json.dumps(serial.get("effective"), ensure_ascii=False))
@@ -1125,6 +1135,7 @@ def check_raw_terminal_view() -> None:
     """原始串口的终端视图（O14B）：按字节重放回车/退格/光标，只换显示不改证据。"""
     print("\n[11] 原始串口终端视图：按字节重放光标、回车与退格")
     app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    terminal_js = (CONSOLE_DIR / "static" / "js" / "model" / "terminal.js").read_text(encoding="utf-8")
     index_html = (CONSOLE_DIR / "static" / "index.html").read_text(encoding="utf-8")
     observe_py = (CONSOLE_DIR / "observe.py").read_text(encoding="utf-8")
     style_css = (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8")
@@ -1143,12 +1154,21 @@ def check_raw_terminal_view() -> None:
         "",
     )
     check(
-        "回车/换行/退格/制表按字节处理，未知序列吞掉不崩",
-        "if (byte === 0x0d)" in app_js
-        and "if (byte === 0x0a)" in app_js
-        and "if (byte === 0x08)" in app_js
-        and "if (byte === 0x09)" in app_js
-        and "termCsi(state, params, String.fromCharCode(feed[at]));" in app_js,
+        "回车/换行/退格/制表按字节处理，未知序列吞掉不崩（实现在 model/terminal.js）",
+        "if (byte === 0x0d)" in terminal_js
+        and "if (byte === 0x0a)" in terminal_js
+        and "if (byte === 0x08)" in terminal_js
+        and "if (byte === 0x09)" in terminal_js
+        and "termCsi(state, params, String.fromCharCode(feed[at]));" in terminal_js
+        and "if (byte === 0x0d)" not in app_js
+        and "termCsi(state, params, String.fromCharCode(feed[at]));" not in app_js,
+        "",
+    )
+    check(
+        "分块 UTF-8 与 CSI 跨块的残尾留在状态里等下一段（不是丢掉）",
+        "state.partial = feed.slice(index);" in terminal_js
+        and "state.partial.length" in terminal_js
+        and "new TextDecoder(\"utf-8\", { fatal: false })" in terminal_js,
         "",
     )
     check(
@@ -1159,10 +1179,12 @@ def check_raw_terminal_view() -> None:
     )
     check(
         "筛选与搜索直接作用在终端正文（与行视图同一套模型）",
-        "if (filtering && hiddenReason(view, text)) continue;" in app_js
-        and "if (dedupe && previousText === text && repeatNode) {" in app_js
-        and "const ranges = re ? matchRanges(re, text) : [];" in app_js
-        and "updateTerminalHits(hits, currentSlot, Boolean(view && view.query));" in app_js
+        "if (filtering && hidden(text)) continue;" in terminal_js
+        and "if (dedupe && previousText === text && repeatRow) {" in terminal_js
+        and "const ranges = rangesOf(text) || [];" in terminal_js
+        and "hidden: (text) => hiddenReason(view, text)," in app_js
+        and "ranges: (text) => (re ? matchRanges(re, text) : [])," in app_js
+        and "updateTerminalHits(plan.hits, plan.currentSlot, Boolean(view && view.query));" in app_js
         and '.term-row[data-repeat]::after { content: " ×" attr(data-repeat);' in
         (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8"),
         "",
@@ -1171,9 +1193,40 @@ def check_raw_terminal_view() -> None:
         "终端投影下「复制」复制的是屏幕可见文本（不是被遮住的行视图）",
         "function terminalVisibleText()" in app_js
         and 'if (id === "raw" && terminalOn()) {' in app_js
+        and 'const host = $("termLines");' in app_js
         and 'host.querySelectorAll(".term-row")' in app_js
+        and "return terminalCopyText(" in app_js
+        and "function terminalCopyText(rowTexts) {" in terminal_js
         and "已复制终端" in app_js
         and 'trimeEnds' not in app_js,
+        "",
+    )
+    check(
+        "终端排版下有搜索命中清单（容器 + 逐行结构）",
+        'id="result-raw"' in index_html
+        and 'id="resultRows-raw"' in index_html
+        and 'id="resultClear-raw"' in index_html
+        and 'id="resultTitle-raw"' in index_html
+        and 'id="resultNote-raw"' in index_html,
+        "",
+    )
+    check(
+        "结果层由模型算、由页面画（条件/签名/文案不在页面里）",
+        "function renderRawResults()" in app_js
+        and "const result = rawResultRows(source, view);" in app_js
+        and "if (host.dataset.signature === signature) return;" in app_js
+        and "renderRawResults();" in app_js
+        and "function resultCriteria(view) {" in
+        (CONSOLE_DIR / "static" / "js" / "model" / "raw-results.js").read_text(encoding="utf-8"),
+        "",
+    )
+    check(
+        "点一条命中跳回终端：文本优先、行号兜底（终端是字节重放，纯行号会差一行）",
+        "function termRowForLine(lineNo, text)" in app_js
+        and "const exact = trimmed.indexOf(target);" in app_js
+        and "if (Number(state.lns[index]) === want) return index;" in app_js
+        and "jumpToRawResult(row.line, row.text)" in app_js
+        and 'item.dataset.line = String(row.line);' in app_js,
         "",
     )
     check(
@@ -1181,6 +1234,24 @@ def check_raw_terminal_view() -> None:
         'if (id === "raw" && terminalOn()) renderTerminalNow();' in app_js
         and 'if (source.el.id === "lines-raw" && terminalOn()) renderTerminalNow();' in app_js
         and 'const terminalOwns = Boolean(source.el && source.el.id === "lines-raw" && terminalOn());' in app_js,
+        "",
+    )
+
+
+    check(
+        "终端默认视图由设备声明给（用户手选过则用户优先，手动开关保留）",
+        "function applyTerminalProjection(observe)" in app_js
+        and "const picked = app.prefs && app.prefs.terminalChoice;" in app_js
+        and 'setTerminalView(picked ? picked === "on" : observe.terminal.projection === true);' in app_js
+        and "applyTerminalProjection(observe);" in app_js
+        and "setTerminalView(!terminalOn(), { remember: true })" in app_js
+        and 'terminalChoice: saved.terminalChoice === "on" || saved.terminalChoice === "off"' in app_js,
+        "",
+    )
+    check(
+        "手动开关一个字都没删（按钮与按下态还在）",
+        'id="terminal-raw"' in index_html
+        and 'if (button) button.setAttribute("aria-pressed", on ? "true" : "false");' in app_js,
         "",
     )
 
@@ -1193,28 +1264,51 @@ def check_frontend_models_live_outside_the_page() -> None:
     index_html = (static_dir / "index.html").read_text(encoding="utf-8")
     model_dir = static_dir / "js" / "model"
     models = sorted(item.name for item in model_dir.glob("*.js"))
-    check("模型文件在 static/js/model 下", {"sources.js", "format.js"} <= set(models), str(models))
+    check("模型文件在 static/js/model 下", {"sources.js", "format.js", "search.js", "terminal.js", "raw-results.js"} <= set(models), str(models))
     tags = re.findall(r'<script src="(/static/[^"]+)"', index_html)
     check(
         "页面先装模型、最后装 app.js",
         "/static/js/model/sources.js" in tags
         and "/static/js/model/format.js" in tags
+        and "/static/js/model/search.js" in tags
+        and "/static/js/model/terminal.js" in tags
+        and "/static/js/model/raw-results.js" in tags
         and tags.index("/static/js/model/sources.js") < tags.index("/static/app.js")
         and tags.index("/static/js/model/format.js") < tags.index("/static/app.js")
+        and tags.index("/static/js/model/log-filter.js") < tags.index("/static/js/model/raw-results.js")
+        and tags.index("/static/js/model/locate.js") < tags.index("/static/js/model/search.js")
+        and tags.index("/static/js/model/search.js") < tags.index("/static/app.js")
+        and tags.index("/static/js/model/terminal.js") < tags.index("/static/app.js")
+        and tags.index("/static/js/model/raw-results.js") < tags.index("/static/app.js")
         and tags[-1] == "/static/app.js",
         str(tags),
     )
     check(
         "app.js 只解构命名空间",
-        "= globalThis.PWModelFormat" in app_js and "= globalThis.PWModelSources" in app_js,
+        "= globalThis.PWModelFormat" in app_js and "= globalThis.PWModelSources" in app_js
+        and "= globalThis.PWModelSearch" in app_js and "= globalThis.PWModelTerminal" in app_js
+        and "= globalThis.PWModelRawResults" in app_js,
         "",
     )
     moved = (
         "toEpochMs", "beijingParts", "beijingClock", "beijingStamp", "parseLine", "isErrorLine",
         "lineTime", "formatDuration", "byteUnits", "compactDuration", "shortTime", "shortSha",
+        # 全文件搜索的纯函数（`js/model/search.js`）：文案、Range 与找行都不再留在页面里。
+        "searchHitLabel", "searchJumpRange", "searchRunningText", "searchDoneText",
+        "searchTextCandidates", "findLineIndex",
+        # 终端状态机（`js/model/terminal.js`）：字节 → 行×列的重放全在那一份里。
+        "createTermState", "termRowChars", "termWriteChar", "termNewline", "termEraseToEnd",
+        "termClearScreen", "termCsi", "termHexBytes", "termSnapshotRows",
     )
     second = [name for name in moved if re.search(r"^function %s\(" % name, app_js, re.M)]
     check("app.js 里没有第二份实现", not second, "；".join(second))
+    check(
+        "搜索结果、证据候选与范围都从模型里取（不是页面自己算）",
+        "searchPaneIn(evidence, searchEvidenceMap())" in app_js
+        and "searchEvidenceChoicesIn(rows, Object.values(searchEvidenceMap()))" in app_js
+        and "largestSearchEvidenceIn(rows, Object.values(searchEvidenceMap()))" in app_js,
+        "",
+    )
     check(
         "窗口清单只有一份",
         "const SOURCES = [" not in app_js
@@ -1225,7 +1319,17 @@ def check_frontend_models_live_outside_the_page() -> None:
         "模型不碰 DOM / 网络 / 存储 / 定时器",
         not re.search(r"\b(document|fetch|EventSource|localStorage|sessionStorage|setTimeout|setInterval)\b",
                       (model_dir / "format.js").read_text(encoding="utf-8")
-                      + (model_dir / "sources.js").read_text(encoding="utf-8")),
+                      + (model_dir / "sources.js").read_text(encoding="utf-8")
+                      + (model_dir / "search.js").read_text(encoding="utf-8")
+                      + (model_dir / "terminal.js").read_text(encoding="utf-8")
+                      + (model_dir / "raw-results.js").read_text(encoding="utf-8")),
+        "",
+    )
+    check(
+        "终端状态机只有一份：页面只把字节转发进模型",
+        "function termApplyBytes(bytes) {\n  termApplyBytesInto(termState(), bytes);\n  return termState();\n}" in app_js
+        and "termApplyBytesInto(state, termHexBytes(event.bytes_hex))" in app_js
+        and "termApplyBytesInto(state, new TextEncoder()" in app_js,
         "",
     )
     body = "const value = 1;\n".encode("utf-8") * 200
@@ -1498,9 +1602,90 @@ def check_backspace_is_selectable() -> None:
     )
 
 
+def check_report_download_link() -> None:
+    """断言区给 report.json 直达下载入口（服务端一直支持，缺的只是页面这一条链接）。
+
+    ⚠️ 判据分两半：**页面真的有入口**（形状与生成路径），以及**入口真的能用**
+    （真服务 → 200 + 附件名 + 内容就是这次 run 的报告）。只查字符串会把“链接写死了
+    但指向别的 run”放过去。
+    """
+    print("\n[19] 断言区：report.json 直达下载")
+    index_html = (CONSOLE_DIR / "static" / "index.html").read_text(encoding="utf-8")
+    app_js = (CONSOLE_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    check(
+        "断言区有证据链接容器，且排在结论之前",
+        'id="assertLinks"' in index_html
+        and index_html.index('id="assertLinks"') < index_html.index('id="paneAssert"'),
+        "",
+    )
+    body = app_js.split("function renderAssertions(assertions) {", 1)[1].split("\n}", 1)[0]
+    check(
+        "链接由结论渲染这一条路生成（不是写死的静态 <a>）",
+        "/api/runs/${encodeURIComponent(app.viewing)}/evidence/report.json?download=1" in body
+        and 'a.textContent = "report.json"' in body,
+        "",
+    )
+    check(
+        "只有正在看一次 run 时才给链接（没有对象就不编一个）",
+        "if (app.viewing) {" in body,
+        "",
+    )
+
+    work = Path(tempfile.mkdtemp(prefix="pw-report-link-"))
+    runs = work / "runs"
+    directory = runs / "20260101-120000-link-demo"
+    directory.mkdir(parents=True)
+    (directory / "raw.bin").write_bytes(b"BOOT ok\r\n")
+    (directory / "decoded.log").write_bytes(b"BOOT ok\n")
+    (directory / "manifest.json").write_text('{"schema": 1}', encoding="utf-8")
+    report = {
+        "schema": 1,
+        "run_id": directory.name,
+        "result": "PASS",
+        "assertions": [{"id": "demo", "status": "pass"}],
+    }
+    (directory / "report.json").write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8"
+    )
+    assembled = console_server.build_live_assembly(
+        runs,
+        sessions_dir=work / "ses",
+        imports_dir=work / "imp",
+        sniff_dir=work / "sniff",
+    )
+    running = Running(assembled)
+    try:
+        status, payload = running.call("GET", f"/api/runs/{directory.name}")
+        check(
+            "打开 run 的详情接口读出这一份报告（链接出现的前提）",
+            status == 200 and bool(payload.get("report")),
+            str(status),
+        )
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{running.port}/api/runs/{directory.name}"
+            "/evidence/report.json?download=1"
+        )
+        with running.opener.open(request, timeout=10) as response:
+            downloaded = response.read().decode("utf-8")
+            disposition = response.headers.get("Content-Disposition") or ""
+        check(
+            "链接真的能下载（200 + 附件名里是本 run 的 id）",
+            "attachment" in disposition and directory.name in disposition,
+            disposition,
+        )
+        parsed = json.loads(downloaded)
+        check(
+            "下下来的就是这份报告（PASS + 1 条断言）",
+            parsed.get("result") == "PASS" and len(parsed.get("assertions") or []) == 1,
+            downloaded[:120],
+        )
+    finally:
+        running.close()
+
+
 def check_selection_boundary_is_static() -> None:
     """证据可复制、控件不可选：`user-select` 边界必须是**静态**规则。"""
-    print("\n[19] 文本选择边界：窗格标题不可选、日志正文可选")
+    print("\n[20] 文本选择边界：窗格标题不可选、日志正文可选")
     style_css = (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8")
     doctor_css = (CONSOLE_DIR / "static" / "doctor.css").read_text(encoding="utf-8")
     tail = style_css[style_css.index("文本选择边界"):] if "文本选择边界" in style_css else ""
@@ -1556,6 +1741,7 @@ def main() -> int:
     check_dangerous_actions_confirm_in_page()
     check_empty_enter_still_sends_a_newline()
     check_backspace_is_selectable()
+    check_report_download_link()
     check_selection_boundary_is_static()
     print()
     if FAILURES:
