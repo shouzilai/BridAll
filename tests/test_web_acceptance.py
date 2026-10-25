@@ -1140,8 +1140,10 @@ def check_raw_terminal_view() -> None:
     observe_py = (CONSOLE_DIR / "observe.py").read_text(encoding="utf-8")
     style_css = (CONSOLE_DIR / "static" / "style.css").read_text(encoding="utf-8")
     check(
-        "每一行原始字节跟着行事件一起发（超长只带前一段并标截断）",
-        'fields["bytes_hex"] = keep.hex()' in observe_py
+        "终端吃实时字节块（行事件不再带 bytes_hex，只留截断标记）",
+        # 终端吃的是**实时字节块**（`term/rx`）；行事件不再带 bytes_hex（两个源会抢状态机）。
+        'dir="rx", bytes_hex=chunk.hex(),' in observe_py
+        and 'fields["bytes_hex"] = keep.hex()' not in observe_py
         and 'fields["bytes_truncated"] = True' in observe_py
         and "RAW_BYTES_HEX_MAX = 8192" in observe_py,
         "",
@@ -1157,7 +1159,7 @@ def check_raw_terminal_view() -> None:
         "回车/换行/退格/制表按字节处理，未知序列吞掉不崩（实现在 model/terminal.js）",
         "if (byte === 0x0d)" in terminal_js
         and "if (byte === 0x0a)" in terminal_js
-        and "if (byte === 0x08)" in terminal_js
+        and "if (byte === 0x08 || byte === 0x7f) {" in terminal_js
         and "if (byte === 0x09)" in terminal_js
         and "termCsi(state, params, String.fromCharCode(feed[at]));" in terminal_js
         and "if (byte === 0x0d)" not in app_js
@@ -1169,6 +1171,12 @@ def check_raw_terminal_view() -> None:
         "state.partial = feed.slice(index);" in terminal_js
         and "state.partial.length" in terminal_js
         and "new TextDecoder(\"utf-8\", { fatal: false })" in terminal_js,
+        "",
+    )
+    check(
+        "BS(0x08) 与 DEL(0x7F) 都按退格处理（只认一个就是“删了字还在”）",
+        "if (byte === 0x08 || byte === 0x7f) {" in terminal_js
+        and "byte < 0x20 || byte === 0x7f" not in terminal_js,
         "",
     )
     check(

@@ -555,6 +555,10 @@ class ObserveSession:
         # 等 @PWINFO 的时长：测试里会调得很短。
         self.identity_wait_s = float(identity_wait_s)
         self.identity_query_text = str(identity_query_text or identity.IDENTITY_QUERY_TEXT)
+        #: 有没有**项目/目标自己声明**的查询文本。没声明就不在连接后自动问：零配置的通用口
+        #: 问一句也拿不到身份（设备回 `command not found`），而那条回显会拼进用户的第一条
+        #: 命令、把光标提前顶到下一行（真机实测的 `msh >abc@PWINFO` 就是这么来的）。
+        self.identity_declared = bool(str(identity_query_text or "").strip())
         self.identity_query_delay_s = max(0.0, float(identity_query_delay_s))
         self.auto_identity = bool(auto_identity)
         #:  / L8：当前运行组合的**声明**（设备可能自称的项目名 / domain / 固件 id）。
@@ -1236,6 +1240,9 @@ class ObserveSession:
         self._stop_identity_queries()
         if not self.auto_identity or not self.capabilities().get("identity", False):
             return
+        # 零配置接入没有声明查询文本：不自动问（问不出身份，回显还会污染用户的会话）。
+        if not self.identity_declared:
+            return
         stop = threading.Event()
         worker = threading.Thread(
             target=self._identity_query_loop,
@@ -1259,8 +1266,16 @@ class ObserveSession:
             worker.join(timeout=READER_JOIN_S)
 
     def _identity_query_loop(self, stop: threading.Event) -> None:
-        if self.identity_query_delay_s and stop.wait(self.identity_query_delay_s):
+        # ⚠️ 连接后自动问身份的前提是“用户还没开口”：问出去的查询，设备的回显会拼进
+        #    用户的第一条命令（真机实测 `msh >abc@PWINFO`，光标被顶到下一行、退格看不见）。
+        #    所以：（1）至少等 2 s，给用户先动手的机会；（2）他已经发过字节就不问了 ——
+        #    要查身份随时可以点「查身份」，那条路不受影响。
+        delay = max(2.0, float(self.identity_query_delay_s or 0.0))
+        if stop.wait(delay):
             return
+        with self._lock:
+            if self._tx_messages > 0:
+                return
         for attempt in range(1, IDENTITY_MAX_ATTEMPTS + 1):
             if stop.is_set():
                 return
@@ -1567,6 +1582,14 @@ class ObserveSession:
                     f"无法创建会话目录：{type(error).__name__}: {error}",
                 )
 
+        # ⚠️ 丢掉**连接前遗留**的字节：嗅探会对候选口发一次身份查询，设备可能在我们
+        # 连上之后才把那条查询的回显吐出来 —— 它会拼进用户的第一个命令、还会让光标
+        # 提前换行（退格因此“看不见效果”）。这些字节属于嗅探，不属于这次会话。
+        try:
+            port.reset_input_buffer()
+        except Exception as error:
+            self._note_rx_error(error)
+
         with self._lock:
             self._port = port
             self._device = spec
@@ -1835,6 +1858,22 @@ class ObserveSession:
                 store.write_rx(chunk)
             except Exception as error:  # 落盘失败不能让读取线程死掉
                 self._note_rx_error(error)
+        # 终端视图吃**实时字节块**：按行推的事件要等换行，交互输入（敲字符/退格/回车）
+        # 就永远慢一拍。`chunk.hex()` 是**无空格**的十六进制 —— 页面按两字符切一个字节；
+        # 用页面上那种空格分隔的写法喂进去会把字节切碎（真机实测字符缺失）。
+        try:
+            line_no = 0
+            if store is not None:
+                try:
+                    line_no = int(store.count_raw_line())
+                except Exception:
+                    line_no = 0
+            self._emit(
+                "term", dir="rx", bytes_hex=chunk.hex(),
+                line_no=line_no, ts=utc_now(),
+            )
+        except Exception:  # 广播失败不能影响采集
+            pass
         if sink is not None:
             try:
                 sink(chunk)
@@ -2029,7 +2068,8 @@ class ObserveSession:
                 {"raw": line_no},
                 "raw",
             )
-            fields["bytes_hex"] = keep.hex()
+            # ⚠️ 不再带 `bytes_hex`：终端只吃 `term/rx` 的实时字节块。两个源同时喂一个
+            #    状态机会互相抢 `partial`，真机上表现为字符被吞。
             if len(line) > cap:
                 fields["bytes_truncated"] = True
             self._emit("raw", continuation=continuation, **fields)

@@ -5828,8 +5828,13 @@ function renderCapture() {
 function setCapture(id) {
   if (!CAPTURE_PANES.includes(id)) return "";
   app.capture = id;
+  // 终端视图下 `lines-raw` 是隐藏的（点不到、也 focus 不了）：焦点落到终端正文上，
+  // 否则按键没有落点 —— “在原始串口里输入”就只能发生在行视图，退格那种控制字符
+  // 永远显示不出来。
   const body = $(`lines-${id}`);
-  if (body && body.focus) body.focus({ preventScroll: true });
+  const term = id === "raw" ? $("termLines") : null;
+  const target = body && body.offsetParent !== null ? body : (term || body);
+  if (target && target.focus) target.focus({ preventScroll: true });
   renderCapture();
   return id;
 }
@@ -5842,10 +5847,12 @@ function releaseCapture() {
 
 /* 这个事件该不该被拿到键盘的那个窗口接管（全局快捷键让位用；纯函数，正文可注入以便宿主回归）。 */
 function paneCaptureOwns(event, captureId, body = $(`lines-${captureId}`)) {
-  if (!captureId || !event || !body) return false;
+  if (!captureId || !event) return false;
   const target = event.target;
   if (!target) return false;
-  return target === body || Boolean(body.contains(target));
+  // 终端视图下正文是 `#termLines`：它也得算“这个窗口拿着键盘”。
+  const hosts = [body, captureId === "raw" ? $("termLines") : null].filter(Boolean);
+  return hosts.some((host) => target === host || Boolean(host.contains(target)));
 }
 
 /* 这次按键值不值得发出去（修饰键自己不发，由服务端给的名单决定）。 */
@@ -5915,11 +5922,14 @@ function wirePaneCapture() {
     const chip = $(`cap-${paneId}`);
     if (chip) chip.addEventListener("click", () => releaseCapture());
     if (!body) continue;
+    // 终端视图下正文是 `#termLines`（行视图被 CSS 藏起来）⇒ 两个容器都要能拿键盘。
+    const hosts = paneId === "raw" ? [body, $("termLines")].filter(Boolean) : [body];
     let down = null;
-    body.addEventListener("mousedown", (event) => {
+    for (const host of hosts) {
+    host.addEventListener("mousedown", (event) => {
       down = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
     });
-    body.addEventListener("mouseup", (event) => {
+    host.addEventListener("mouseup", (event) => {
       if (!down) return;
       const moved = Math.abs(event.clientX - down.x) + Math.abs(event.clientY - down.y);
       down = null;
@@ -5935,7 +5945,7 @@ function wirePaneCapture() {
       // 没捕获：只把“正拿着键盘的窗口被拖选了”这件事处理掉（那一下是要选字，不是要敲键）。
       if (hasSelection && capturingId() === paneId) releaseCapture();
     });
-    body.addEventListener("keydown", (event) => {
+    host.addEventListener("keydown", (event) => {
       if (capturingId() !== paneId) return;   // 没拿到键盘：一个键也不吞，页面快捷键照常
       if (event.key === "Escape") {
         // Esc = 放开键盘：Tab / 方向键都是要发给设备的字节，页面里需要一个不产生字节的"离开"入口。
@@ -5955,6 +5965,7 @@ function wirePaneCapture() {
       enqueueTerminalKey(terminalState(), descriptor);
       flushTerminal();
     });
+    }
   }
   // 焦点跑到这两个窗口外面（比如点进了命令输入框、点了别的面板）就放开键盘：
   // 否则“键盘归谁”会与实际情况不符，而那个不符很难被看出来。
@@ -5962,8 +5973,10 @@ function wirePaneCapture() {
     const id = capturingId();
     if (!id) return;
     const body = $(`lines-${id}`);
+    const term = id === "raw" ? $("termLines") : null;
     const target = event.target instanceof Element ? event.target : null;
-    if (body && target && (target === body || body.contains(target))) return;
+    const owns = (host) => Boolean(host && target && (target === host || host.contains(target)));
+    if (owns(body) || owns(term)) return;
     releaseCapture();
   });
 }
@@ -8282,7 +8295,10 @@ function applyEvent(event, touched) {
       } else {
         add("raw", feed(store, "raw", event.line, event.ts, { defer, lineNo: event.line_no }));
       }
-      // 终端视图：按服务端给的**原始字节**重放（行视图与证据都没有变，只多一个显示层）。
+      // 终端视图只吃下一行的 `term`（实时字节块）：行事件再喂一次就会双喂（实测字符被打散）。
+      break;
+    case "term":
+      // 终端视图的**实时字节块**（与 raw.bin 同源）：敲字符、退格、回车到了就画。
       termFeedEvent(event);
       break;
     case "decoded":
@@ -9013,6 +9029,19 @@ function termApplyBytes(bytes) {
 
 
 function termFeedEvent(event) {
+  if (!terminalOn()) return;
+  const state = termState();
+  // 只认实时字节块（`term/rx`）：按行重放要等换行，交互输入永远慢一拍。
+  if (!event || event.dir !== "rx") return;
+  // 行号/时间戳跟着块走：终端每一行要能对回证据（`data-ln`），丢了这个就只有文本。
+  if (event.line_no) state.nextLn = Number(event.line_no) || null;
+  if (event.ts) state.nextTs = String(event.ts);
+  if (event.bytes_hex) termApplyBytesInto(state, termHexBytes(event.bytes_hex));
+  renderTerminalNow();
+}
+
+/* 旧路径（按行重放）保留在这里仅供回归对照，页面不再调用。 */
+function termFeedLineLegacy(event) {
   if (!terminalOn()) return;
   const state = termState();
   state.nextLn = Number((event && event.line_no) || 0) || null;

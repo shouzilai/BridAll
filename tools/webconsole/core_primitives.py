@@ -111,7 +111,12 @@ def idle_partial(
 
 
 def visible_line_remainder(line: bytes, shown: int = 0) -> bytes:
-    """Return the completed-line bytes that have not already been painted."""
+    """Return the completed-line bytes that have not already been painted.
+
+    ⚠️ 这个函数也用在**半行（idle）补写**那条路上，所以“把纯行尾也返回”会立刻变成
+    每个字符一行（实测）。行尾丢失的问题不能在这里补 —— 终端要的是**字节流**，
+    不是从行事件里拼回来的片段（见 `docs`/后续改造：RX 分块直接推给终端）。
+    """
     remainder = bytes(line[max(0, int(shown)):])
     if shown > 0 and not remainder.rstrip(b"\r\n"):
         return b""
